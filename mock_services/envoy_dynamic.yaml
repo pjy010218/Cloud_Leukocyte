@@ -1,0 +1,42 @@
+node:
+  cluster: symbiosis_cluster
+  id: envoy_sidecar_1
+
+dynamic_resources:
+  lds_config:
+    resource_api_version: V3
+    api_config_source:
+      api_type: REST
+      transport_api_version: V3
+      cluster_names: [xds_cluster]
+      refresh_delay: 5s
+
+static_resources:
+  clusters:
+  - name: xds_cluster
+    connect_timeout: 0.25s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: xds_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 8002
+
+  - name: inventory_service
+    connect_timeout: 0.25s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: inventory_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 8080
