@@ -10,18 +10,6 @@ from typing import Dict, Any, List
 # 1. 데이터 모델 (Input: Phase 2에서 검증된 정책)
 # ----------------------------------------------------------------------
 
-FINAL_VALIDATED_POLICY = {
-    "target_endpoint": "/api/v1/inventory/reserve",
-    "minimum_allowed_fields": ["order_amount", "shipping_address", "sku"],
-    "verification_status": "VALIDATED_SUCCESS",
-    "policy_version": 1,
-    "merged_timestamp": "2025-12-01T12:00:00Z"
-}
-
-# ----------------------------------------------------------------------
-# 2. 핵심 기능: 실행 아티팩트 컴파일 (O(1) Lookup 최적화)
-# ----------------------------------------------------------------------
-
 from schemas import MergedPolicy, ExecutionArtifact
 import datetime
 
@@ -76,20 +64,139 @@ def generate_ebpf_map_config(artifact: ExecutionArtifact) -> str:
         
     return "\n".join(c_code)
 
+import urllib.request
+import json
+
+def push_to_xds(artifact: ExecutionArtifact, xds_server_url: str = "http://xds-server:8001/update"):
+    """
+    Converts the artifact into an Envoy Listener configuration and pushes it to the xDS server.
+    This closes the loop by dynamically updating the Data Plane.
+    """
+    # 1. Construct Envoy Listener Config (Simplified)
+    # We are creating a listener that uses the 'inventory_service' cluster but adds RBAC or Lua filtering
+    # based on the allowed fields. For this PoC, we will just demonstrate pushing the *list* of allowed fields
+    # to a hypothetical Lua filter configuration.
+    
+    allowed_fields_list = list(artifact.allowed_fields_map.keys())
+    
+    # In a real scenario, this would be a full Listener protobuf structure converted to JSON.
+    # Here we construct the JSON structure expected by our mock xds_server.py
+    
+    envoy_config_update = {
+        "version_info": str(int(datetime.datetime.now().timestamp())),
+        "resources": [
+            {
+                "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
+                "name": "listener_0",
+                "address": {
+                    "socket_address": {
+                        "address": "0.0.0.0",
+                        "port_value": 10000
+                    }
+                },
+                "filter_chains": [{
+                    "filters": [{
+                        "name": "envoy.filters.network.http_connection_manager",
+                        "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                            "stat_prefix": "ingress_http",
+                            "route_config": {
+                                "name": "local_route",
+                                "virtual_hosts": [{
+                                    "name": "local_service",
+                                    "domains": ["*"],
+                                    "routes": [{
+                                        "match": {"prefix": "/"},
+                                        "route": {"cluster": "inventory_service"}
+                                    }]
+                                }]
+                            },
+                            "http_filters": [
+                                {
+                                    "name": "envoy.filters.http.lua",
+                                    "typed_config": {
+                                        "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua",
+                                        "inline_code": f"""
+                                            function envoy_on_request(request_handle)
+                                                -- Symbiosis Enforced Policy
+                                                -- Allowed Fields: {allowed_fields_list}
+                                                local body = request_handle:body()
+                                                if body then
+                                                    local body_str = body:getBytes(0, body:length())
+                                                    request_handle:logInfo("Inspecting Body: " .. body_str)
+                                                    -- In a real implementation, we would parse JSON and check fields here.
+                                                    -- For PoC, we just log the active policy.
+                                                    request_handle:logInfo("Active Policy Allow List: {', '.join(allowed_fields_list)}")
+                                                end
+                                            end
+                                        """
+                                    }
+                                },
+                                {
+                                    "name": "envoy.filters.http.router",
+                                    "typed_config": {
+                                        "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                                    }
+                                }
+                            ]
+                        }
+                    }]
+                }]
+            }
+        ]
+    }
+    
+    # 2. Push to xDS Server
+    try:
+        req = urllib.request.Request(
+            xds_server_url, 
+            data=json.dumps(envoy_config_update).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req) as response:
+            print(f"Successfully pushed policy to xDS Server. Status: {response.status}")
+    except Exception as e:
+        print(f"Failed to push to xDS Server: {e}")
+
+
+# ----------------------------------------------------------------------
+# 3. 테스트 및 실행
+# ----------------------------------------------------------------------
+
 # ----------------------------------------------------------------------
 # 3. 테스트 및 실행
 # ----------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import dataclasses
+    import sys
+    
+    # 3.1 모의 입력 데이터 (검증된 정책 객체)
+    # Phase 2에서 검증 완료된 MergedPolicy 객체를 시뮬레이션
+    FINAL_VALIDATED_POLICY = MergedPolicy(
+        target_endpoint="/api/v1/inventory/reserve",
+        minimum_allowed_fields=["order_amount", "shipping_address", "sku"],
+        verification_status="VALIDATED_SUCCESS",
+        policy_version=1,
+        merged_timestamp="2025-12-01T12:00:00Z",
+        source_leukocytes=["L-TEST"]
+    )
+
     print("--- 🚀 Phase 3: 정책 컴파일러 및 실행 아티팩트 생성 ---")
-    print(f"입력 정책 (Validated Policy): {json.dumps(FINAL_VALIDATED_POLICY, indent=2)}")
+    print(f"입력 정책 (Validated Policy): {dataclasses.asdict(FINAL_VALIDATED_POLICY)}")
     
     # 컴파일 실행
     execution_artifact = compile_to_data_plane_artifact(FINAL_VALIDATED_POLICY)
     
     print("\n>> 생성된 실행 아티팩트 (Data Plane Artifact):")
-    print(json.dumps(execution_artifact, indent=4))
+    print(json.dumps(dataclasses.asdict(execution_artifact), indent=4))
     
     print("\n[성능 최적화 확인]")
-    print(f"Lookup Structure Type: {type(execution_artifact['allowed_fields_map'])}")
+    print(f"Lookup Structure Type: {type(execution_artifact.allowed_fields_map)}")
     print("-> Dictionary(Hash Map) 구조를 사용하여 O(1) 필드 검사를 보장합니다.")
+
+    # CLI Argument Handling for 'push'
+    if len(sys.argv) > 1 and sys.argv[1] == "push":
+        print("\n[Action] Pushing to xDS Server...")
+        # Use localhost for manual experiment
+        push_to_xds(execution_artifact, xds_server_url="http://127.0.0.1:8002/update")
