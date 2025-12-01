@@ -49,7 +49,14 @@ GLOBAL_FORBIDDEN_FIELDS: Set[str] = {
 # 2. 핵심 기능: 정책 통합 및 갈등 해결
 # ----------------------------------------------------------------------
 
-def merge_policies(policy_drafts: List[Dict[str, Any]]) -> Dict[str, Any]:
+from schemas import PolicyDraft, MergedPolicy
+import datetime
+
+# ----------------------------------------------------------------------
+# 2. 핵심 기능: 정책 통합 및 갈등 해결
+# ----------------------------------------------------------------------
+
+def merge_policies(policy_drafts: List[PolicyDraft]) -> MergedPolicy:
     """
     분산된 백혈구 정책 초안들을 통합하고, '가장 엄격한 정책 우선' 원칙을 적용합니다.
     (Rule N.3, N.1 준수)
@@ -57,68 +64,85 @@ def merge_policies(policy_drafts: List[Dict[str, Any]]) -> Dict[str, Any]:
     가장 엄격한 정책은 모든 초안이 공통으로 허용한 필드(교집합)만을 최종 허용합니다.
     """
     if not policy_drafts:
-        return {}
+        raise ValueError("No policy drafts provided for merging.")
 
     # 첫 번째 정책의 필드 집합으로 초기화
     # set()을 사용하여 Rule N.1을 준수
-    all_allowed_fields: Set[str] = set(policy_drafts[0]["minimum_allowed_fields"])
-    
-    # 공통 메타데이터 추출 (모든 정책이 동일하다고 가정)
-    base_policy_info = {k: policy_drafts[0][k] for k in ["target_endpoint", "policy_version"]}
+    all_allowed_fields: Set[str] = set(policy_drafts[0].minimum_allowed_fields)
     
     # 나머지 정책들과 교집합을 수행 (가장 엄격한 정책 도출)
     for draft in policy_drafts[1:]:
-        draft_fields = set(draft["minimum_allowed_fields"])
+        draft_fields = set(draft.minimum_allowed_fields)
         # 교집합 연산: 가장 엄격한 (공통된) 허용 집합을 만듦
         all_allowed_fields = all_allowed_fields.intersection(draft_fields)
     
     # 통합된 정책 생성 (Rule G.3: 새로운 버전으로 간주될 수 있음)
-    merged_policy = {
-        **base_policy_info,
-        "minimum_allowed_fields": sorted(list(all_allowed_fields)),
-        "source_leukocytes": [d["source_leukocyte_id"] for d in policy_drafts],
-        "merged_timestamp": "2025-12-01T12:00:00Z" # 실제로는 현재 시간
-    }
-    
-    return merged_policy
+    return MergedPolicy(
+        target_endpoint=policy_drafts[0].target_endpoint,
+        policy_version=policy_drafts[0].policy_version,
+        minimum_allowed_fields=sorted(list(all_allowed_fields)),
+        source_leukocytes=[d.source_leukocyte_id for d in policy_drafts],
+        merged_timestamp=datetime.datetime.now().isoformat(),
+        verification_status="PENDING"
+    )
 
-def mock_formal_verification(merged_policy: Dict[str, Any], global_rules: Set[str]) -> Tuple[Dict[str, Any], bool]:
+def mock_formal_verification(merged_policy: MergedPolicy, global_rules: Set[str], receiver_schema: Set[str] = None) -> Tuple[MergedPolicy, bool]:
     """
     통합된 정책이 전역 보안 속성을 위반하는지 모의 검증하고, 필요시 자동 수정합니다.
     (Rule N.2 준수)
     
-    Global_rules은 전역적으로 금지된 필드를 나타냅니다.
+    [Advanced Feature: Information Flow Control]
+    If receiver_schema (I) is provided, verifies that M <= I.
+    This proves that the policy allows NO MORE than what the receiver explicitly needs.
     """
     if not merged_policy:
-        return {}, False
+        raise ValueError("No merged policy provided for verification.")
         
-    current_allowed_fields = set(merged_policy["minimum_allowed_fields"])
+    current_allowed_fields = set(merged_policy.minimum_allowed_fields)
     
-    # 위반 필드 확인 (교집합)
+    # 1. Global Blacklist Check
     violated_fields = current_allowed_fields.intersection(global_rules)
     
-    is_valid = True
+    # 2. Information Flow Check (M <= I)
+    excess_fields = set()
+    if receiver_schema:
+        # Excess = M - I (Fields in M that are NOT in I)
+        excess_fields = current_allowed_fields.difference(receiver_schema)
+        if excess_fields:
+            print(f"\n[VERIFICATION FAIL] Information Flow Violation: Policy allows fields not required by receiver: {excess_fields}")
+            print("-> TLA+ Assertion Failed: M \\subseteq I_{receiver}")
     
-    if violated_fields:
-        is_valid = False
+    if violated_fields or excess_fields:
         print(f"\n[VERIFICATION FAIL] 전역 규칙 위반 필드 발견: {violated_fields}")
         print("-> 정책 일관성 유지를 위해 차집합 연산으로 위반 필드를 자동 수정합니다.")
         
         # 자동 수정 (차집합 연산)
-        # Rule N.1 준수: M_final = M_intermediate \ R_global
-        fixed_allowed_fields = current_allowed_fields.difference(violated_fields)
+        # Rule N.1 준수: M_final = (M \ R_global) \ Excess
+        fixed_allowed_fields = current_allowed_fields.difference(violated_fields).difference(excess_fields)
         
         # 수정된 정책 생성 (불변성을 위해 새 객체 생성)
-        fixed_policy = merged_policy.copy()
-        fixed_policy["minimum_allowed_fields"] = sorted(list(fixed_allowed_fields))
-        fixed_policy["verification_status"] = "FIXED_AND_VALIDATED"
-        fixed_policy["verification_notes"] = f"Removed global violation fields: {violated_fields}"
+        fixed_policy = MergedPolicy(
+            target_endpoint=merged_policy.target_endpoint,
+            policy_version=merged_policy.policy_version,
+            minimum_allowed_fields=sorted(list(fixed_allowed_fields)),
+            source_leukocytes=merged_policy.source_leukocytes,
+            merged_timestamp=merged_policy.merged_timestamp,
+            verification_status="FIXED_AND_VALIDATED",
+            verification_notes=f"Removed global violation fields: {violated_fields}, Excess fields: {excess_fields}"
+        )
         
-        return fixed_policy, is_valid
+        return fixed_policy, False
     
     # 검증 성공
-    validated_policy = merged_policy.copy()
-    validated_policy["verification_status"] = "VALIDATED_SUCCESS"
+    print("\n[VERIFICATION SUCCESS] TLA+ Assertion Passed: M \\subseteq I_{receiver} AND M \\cap R_{global} = \\emptyset")
+    validated_policy = MergedPolicy(
+        target_endpoint=merged_policy.target_endpoint,
+        policy_version=merged_policy.policy_version,
+        minimum_allowed_fields=merged_policy.minimum_allowed_fields,
+        source_leukocytes=merged_policy.source_leukocytes,
+        merged_timestamp=merged_policy.merged_timestamp,
+        verification_status="VALIDATED_SUCCESS"
+    )
     return validated_policy, True
 
 

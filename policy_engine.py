@@ -1,6 +1,46 @@
 import json
 from typing import Set, Dict, Any
 
+from schemas import PolicyDraft
+import datetime
+from typing import List, Dict, Any, Set
+
+def flatten_json(y: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flattens a nested JSON object into a single dictionary with dot-notation keys.
+    Example: {"user": {"id": 1}} -> {"user.id": 1}
+    """
+    out = {}
+
+    def flatten(x: Any, name: str = ''):
+        if type(x) is dict:
+            for a in x:
+                flatten(x[a], name + a + '.')
+        elif type(x) is list:
+            i = 0
+            for a in x:
+                flatten(a, name + str(i) + '.')
+                i += 1
+        else:
+            out[name[:-1]] = x
+
+    flatten(y)
+    return out
+
+def profile_traffic(traffic_logs: List[Dict[str, Any]]) -> Set[str]:
+    """
+    Analyzes a list of traffic logs (JSON payloads) and extracts the set of 
+    fields that appear in the traffic. Handles nested fields via flattening.
+    
+    This simulates the 'Learning' phase where D (Requester Set) or I (Receiver Set)
+    is derived from actual runtime behavior.
+    """
+    observed_fields = set()
+    for log in traffic_logs:
+        flattened = flatten_json(log)
+        observed_fields.update(flattened.keys())
+    return observed_fields
+
 def calculate_minimum_set(requester_fields: Set[str], receiver_fields: Set[str]) -> Set[str]:
     """
     Calculates the Minimum Nutrient Set (M) by taking the intersection of
@@ -33,24 +73,28 @@ def calculate_forbidden_fields(allowed_set: Set[str], sensitive_set: Set[str]) -
     """
     return allowed_set.difference(sensitive_set)
 
-def generate_policy_output(final_set: Set[str], target_endpoint: str) -> str:
+from schemas import PolicyDraft
+import datetime
+
+def generate_policy_output(final_set: Set[str], target_endpoint: str, leukocyte_id: str = "L-GENERIC") -> PolicyDraft:
     """
-    Generates a JSON policy specification from the final allowed field set.
+    Generates a PolicyDraft object from the final allowed field set.
     
     Args:
         final_set (Set[str]): The final set of allowed fields (M').
         target_endpoint (str): The target API endpoint.
+        leukocyte_id (str): ID of the generating leukocyte.
         
     Returns:
-        str: A JSON string representing the policy.
+        PolicyDraft: A structured policy draft object.
     """
-    policy = {
-        "policy_version": "1.0",
-        "target_endpoint": target_endpoint,
-        "allowed_fields": sorted(list(final_set)),
-        "action": "ALLOW" if final_set else "DENY"
-    }
-    return json.dumps(policy, indent=4)
+    return PolicyDraft(
+        policy_version=1,
+        target_endpoint=target_endpoint,
+        minimum_allowed_fields=sorted(list(final_set)),
+        source_leukocyte_id=leukocyte_id,
+        timestamp=datetime.datetime.now().isoformat()
+    )
 
 def main():
     # Sample Data

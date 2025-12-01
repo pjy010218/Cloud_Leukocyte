@@ -22,7 +22,10 @@ FINAL_VALIDATED_POLICY = {
 # 2. 핵심 기능: 실행 아티팩트 컴파일 (O(1) Lookup 최적화)
 # ----------------------------------------------------------------------
 
-def compile_to_data_plane_artifact(validated_policy: Dict[str, Any]) -> Dict[str, Any]:
+from schemas import MergedPolicy, ExecutionArtifact
+import datetime
+
+def compile_to_data_plane_artifact(validated_policy: MergedPolicy) -> ExecutionArtifact:
     """
     검증된 정책을 Data Plane(Envoy/eBPF)에서 즉시 사용할 수 있는 
     고성능 룩업(Lookup) 지향 아티팩트 형태로 변환합니다.
@@ -34,7 +37,7 @@ def compile_to_data_plane_artifact(validated_policy: Dict[str, Any]) -> Dict[str
     """
     
     # 1. 필드 리스트 추출
-    allowed_fields_list = validated_policy.get("minimum_allowed_fields", [])
+    allowed_fields_list = validated_policy.minimum_allowed_fields
     
     # 2. O(1) Lookup을 위한 Hash Map 변환
     # Key: 필드명, Value: 1 (존재 여부만 확인하면 되므로 최소한의 값 사용)
@@ -42,24 +45,36 @@ def compile_to_data_plane_artifact(validated_policy: Dict[str, Any]) -> Dict[str
     allowed_fields_map = {field: 1 for field in allowed_fields_list}
     
     # 3. 실행 아티팩트 생성
-    artifact = {
-        "artifact_version": "1.0",
-        "target_endpoint": validated_policy["target_endpoint"],
-        "action": "ALLOW", # 기본 동작
-        
-        # [Performance Optimization]
-        # 리스트 순회(O(N)) 대신 해시 맵 룩업(O(1))을 사용하도록 구조화됨.
-        # Data Plane 로직 예시: if field_name in allowed_fields_map: pass
-        "allowed_fields_map": allowed_fields_map,
-        
-        "metadata": {
-            "source_policy_version": validated_policy.get("policy_version"),
-            "compiled_at": "2025-12-01T12:05:00Z",
+    return ExecutionArtifact(
+        artifact_version="1.0",
+        target_endpoint=validated_policy.target_endpoint,
+        action="ALLOW",
+        allowed_fields_map=allowed_fields_map,
+        metadata={
+            "source_policy_version": validated_policy.policy_version,
+            "compiled_at": datetime.datetime.now().isoformat(),
             "optimization_note": "Optimized for O(1) field lookup using Hash Map."
         }
-    }
+    )
+
+def generate_ebpf_map_config(artifact: ExecutionArtifact) -> str:
+    """
+    Generates a C-style eBPF Map initialization snippet for the Data Plane.
+    This demonstrates the "Realistic Data Plane Artifact" requirement.
+    """
+    c_code = []
+    c_code.append(f"// eBPF Map Update for Endpoint: {artifact.target_endpoint}")
+    c_code.append("// Map Type: BPF_MAP_TYPE_HASH")
+    c_code.append("// Key: Field Name Hash (u32), Value: Allowed (u8)")
     
-    return artifact
+    for field_name in artifact.allowed_fields_map.keys():
+        # Simulating a hash function for the field name
+        field_hash = hash(field_name) & 0xFFFFFFFF
+        c_code.append(f"uint32_t key_{field_name.replace('.', '_')} = {field_hash};")
+        c_code.append(f"uint8_t value = 1;")
+        c_code.append(f"bpf_map_update_elem(&policy_map, &key_{field_name.replace('.', '_')}, &value, BPF_ANY);")
+        
+    return "\n".join(c_code)
 
 # ----------------------------------------------------------------------
 # 3. 테스트 및 실행
