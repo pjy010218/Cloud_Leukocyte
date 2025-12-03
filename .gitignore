@@ -12,6 +12,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+istio-1.28.0/
 .vscode/
 eggs/
 .eggs/

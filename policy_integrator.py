@@ -1,40 +1,47 @@
 # -*- coding: utf-8 -*-
 #
-# Phase 2: 정책 통합 및 갈등 해결 로직 구현 (Verification Engine 핵심)
+# Phase 2 & 19: 정책 통합 및 갈등 해결 로직 구현 (Verification Engine 핵심)
 # 분산된 백혈구들의 정책을 통합하고 정형 속성을 모의 검증합니다.
+# Phase 19 Update: Distributed Leukocytes (Flow-based Integration)
 
 import json
+import datetime
 from typing import Set, Dict, Any, List, Tuple
+from schemas import PolicyDraft, MergedPolicy
 
 # ----------------------------------------------------------------------
 # 1. 데이터 모델 및 샘플 데이터 (Leukocyte 정책 출력 시뮬레이션)
 # ----------------------------------------------------------------------
 
-# 분산된 백혈구(Leukocyte) L-1A와 L-2B가 동일 엔드포인트에 대해 산출한 정책 초안 리스트
+# 분산된 백혈구(Leukocyte)들이 제출한 정책 초안 리스트
+# Phase 19: Added 'flow_id' to distinguish traffic flows.
 POLICY_DRAFT_INPUT: List[Dict[str, Any]] = [
+    # Flow A: AuthService -> InventoryService (Minimal Access)
     {
-        "policy_version": 1, # Rule G.3: 정책은 불변하며 버전 관리됨
+        "flow_id": "AuthService->InventoryService:/api/v1/inventory/reserve",
+        "policy_version": 2,
         "target_endpoint": "/api/v1/inventory/reserve",
-        # L-1A: 'order_amount', 'shipping_address', 'sku' 허용 (매우 엄격)
-        "minimum_allowed_fields": ["order_amount", "shipping_address", "sku"],
-        "source_leukocyte_id": "L-1A",
+        "minimum_allowed_fields": ["sku", "order_amount"], # Minimal
+        "source_leukocyte_id": "L-Auth-1",
         "timestamp": "2025-12-01T10:00:00Z"
     },
+    # Flow B: BillingService -> InventoryService (Rich Access)
     {
-        "policy_version": 1,
+        "flow_id": "BillingService->InventoryService:/api/v1/inventory/reserve",
+        "policy_version": 2,
         "target_endpoint": "/api/v1/inventory/reserve",
-        # L-2B: 'order_amount', 'shipping_address', 'warehouse_id', 'sku' 허용 (L-1A보다 덜 엄격)
-        "minimum_allowed_fields": ["order_amount", "shipping_address", "warehouse_id", "sku"],
-        "source_leukocyte_id": "L-2B",
+        "minimum_allowed_fields": ["sku", "order_amount", "shipping_address", "billing_code"], # Richer
+        "source_leukocyte_id": "L-Billing-1",
         "timestamp": "2025-12-01T10:05:00Z"
     },
+    # Flow B Conflict: Another Leukocyte for BillingService proposing stricter rules
     {
-        "policy_version": 1,
+        "flow_id": "BillingService->InventoryService:/api/v1/inventory/reserve",
+        "policy_version": 2,
         "target_endpoint": "/api/v1/inventory/reserve",
-        # L-3C: 실수로 'customer_pii'를 포함함 (심각한 갈등 상황)
-        "minimum_allowed_fields": ["order_amount", "customer_pii", "shipping_address", "sku"],
-        "source_leukocyte_id": "L-3C",
-        "timestamp": "2025-12-01T10:10:00Z"
+        "minimum_allowed_fields": ["sku", "order_amount", "shipping_address"], # Missing billing_code (Conflict)
+        "source_leukocyte_id": "L-Billing-2",
+        "timestamp": "2025-12-01T10:06:00Z"
     }
 ]
 
@@ -49,128 +56,174 @@ GLOBAL_FORBIDDEN_FIELDS: Set[str] = {
 # 2. 핵심 기능: 정책 통합 및 갈등 해결
 # ----------------------------------------------------------------------
 
-from schemas import PolicyDraft, MergedPolicy
-import datetime
-
-# ----------------------------------------------------------------------
-# 2. 핵심 기능: 정책 통합 및 갈등 해결
-# ----------------------------------------------------------------------
-
-def merge_policies(policy_drafts: List[PolicyDraft]) -> MergedPolicy:
+def merge_policies(policy_drafts: List[PolicyDraft]) -> Dict[str, MergedPolicy]:
     """
-    분산된 백혈구 정책 초안들을 통합하고, '가장 엄격한 정책 우선' 원칙을 적용합니다.
-    (Rule N.3, N.1 준수)
+    분산된 백혈구 정책 초안들을 Flow ID별로 통합합니다.
     
-    가장 엄격한 정책은 모든 초안이 공통으로 허용한 필드(교집합)만을 최종 허용합니다.
+    Logic:
+    1. Group drafts by `flow_id`.
+    2. For each flow, apply Version Conflict Resolution (Max Version).
+    3. For each flow, apply Intersection Logic (Strict Merge) for conflicts.
+    
+    Returns:
+        Dict[flow_id, MergedPolicy]: A map of merged policies per flow.
     """
     if not policy_drafts:
         raise ValueError("No policy drafts provided for merging.")
 
-    # 첫 번째 정책의 필드 집합으로 초기화
-    # set()을 사용하여 Rule N.1을 준수
-    all_allowed_fields: Set[str] = set(policy_drafts[0].minimum_allowed_fields)
+    # 1. Group by Flow ID
+    grouped_drafts: Dict[str, List[PolicyDraft]] = {}
+    for draft in policy_drafts:
+        if draft.flow_id not in grouped_drafts:
+            grouped_drafts[draft.flow_id] = []
+        grouped_drafts[draft.flow_id].append(draft)
+        
+    merged_results = {}
     
-    # 나머지 정책들과 교집합을 수행 (가장 엄격한 정책 도출)
-    for draft in policy_drafts[1:]:
-        draft_fields = set(draft.minimum_allowed_fields)
-        # 교집합 연산: 가장 엄격한 (공통된) 허용 집합을 만듦
-        all_allowed_fields = all_allowed_fields.intersection(draft_fields)
-    
-    # 통합된 정책 생성 (Rule G.3: 새로운 버전으로 간주될 수 있음)
-    return MergedPolicy(
-        target_endpoint=policy_drafts[0].target_endpoint,
-        policy_version=policy_drafts[0].policy_version,
-        minimum_allowed_fields=sorted(list(all_allowed_fields)),
-        source_leukocytes=[d.source_leukocyte_id for d in policy_drafts],
-        merged_timestamp=datetime.datetime.now().isoformat(),
-        verification_status="PENDING"
-    )
+    for flow_id, drafts in grouped_drafts.items():
+        # 2. Find Max Version per Flow
+        max_version = max(d.policy_version for d in drafts)
+        
+        # Filter Drafts
+        active_drafts = [d for d in drafts if d.policy_version == max_version]
+        ignored_drafts = [d for d in drafts if d.policy_version < max_version]
+        
+        if ignored_drafts:
+            print(f"[WARNING] Flow '{flow_id}': Ignoring {len(ignored_drafts)} drafts with older versions.")
 
-def mock_formal_verification(merged_policy: MergedPolicy, global_rules: Set[str], receiver_schema: Set[str] = None) -> Tuple[MergedPolicy, bool]:
-    """
-    통합된 정책이 전역 보안 속성을 위반하는지 모의 검증하고, 필요시 자동 수정합니다.
-    (Rule N.2 준수)
-    
-    [Advanced Feature: Information Flow Control]
-    If receiver_schema (I) is provided, verifies that M <= I.
-    This proves that the policy allows NO MORE than what the receiver explicitly needs.
-    """
-    if not merged_policy:
-        raise ValueError("No merged policy provided for verification.")
+        # 3. Intersection Logic (Strict Merge) within Flow
+        # Rule N.1: Intersection of allowed fields
+        all_allowed_fields: Set[str] = set(active_drafts[0].minimum_allowed_fields)
         
-    current_allowed_fields = set(merged_policy.minimum_allowed_fields)
-    
-    # 1. Global Blacklist Check
-    violated_fields = current_allowed_fields.intersection(global_rules)
-    
-    # 2. Information Flow Check (M <= I)
-    excess_fields = set()
-    if receiver_schema:
-        # Excess = M - I (Fields in M that are NOT in I)
-        excess_fields = current_allowed_fields.difference(receiver_schema)
-        if excess_fields:
-            print(f"\n[VERIFICATION FAIL] Information Flow Violation: Policy allows fields not required by receiver: {excess_fields}")
-            print("-> TLA+ Assertion Failed: M \\subseteq I_{receiver}")
-    
-    if violated_fields or excess_fields:
-        print(f"\n[VERIFICATION FAIL] 전역 규칙 위반 필드 발견: {violated_fields}")
-        print("-> 정책 일관성 유지를 위해 차집합 연산으로 위반 필드를 자동 수정합니다.")
-        
-        # 자동 수정 (차집합 연산)
-        # Rule N.1 준수: M_final = (M \ R_global) \ Excess
-        fixed_allowed_fields = current_allowed_fields.difference(violated_fields).difference(excess_fields)
-        
-        # 수정된 정책 생성 (불변성을 위해 새 객체 생성)
-        fixed_policy = MergedPolicy(
-            target_endpoint=merged_policy.target_endpoint,
-            policy_version=merged_policy.policy_version,
-            minimum_allowed_fields=sorted(list(fixed_allowed_fields)),
-            source_leukocytes=merged_policy.source_leukocytes,
-            merged_timestamp=merged_policy.merged_timestamp,
-            verification_status="FIXED_AND_VALIDATED",
-            verification_notes=f"Removed global violation fields: {violated_fields}, Excess fields: {excess_fields}"
+        for draft in active_drafts[1:]:
+            draft_fields = set(draft.minimum_allowed_fields)
+            all_allowed_fields = all_allowed_fields.intersection(draft_fields)
+            
+        # Create Merged Policy for this Flow
+        merged_results[flow_id] = MergedPolicy(
+            flow_id=flow_id,
+            target_endpoint=active_drafts[0].target_endpoint,
+            policy_version=max_version,
+            minimum_allowed_fields=sorted(list(all_allowed_fields)),
+            source_leukocytes=[d.source_leukocyte_id for d in active_drafts],
+            merged_timestamp=datetime.datetime.now().isoformat(),
+            verification_status="PENDING"
         )
         
-        return fixed_policy, False
-    
-    # 검증 성공
-    print("\n[VERIFICATION SUCCESS] TLA+ Assertion Passed: M \\subseteq I_{receiver} AND M \\cap R_{global} = \\emptyset")
-    validated_policy = MergedPolicy(
-        target_endpoint=merged_policy.target_endpoint,
-        policy_version=merged_policy.policy_version,
-        minimum_allowed_fields=merged_policy.minimum_allowed_fields,
-        source_leukocytes=merged_policy.source_leukocytes,
-        merged_timestamp=merged_policy.merged_timestamp,
-        verification_status="VALIDATED_SUCCESS"
-    )
-    return validated_policy, True
+    return merged_results
 
+def check_policy_non_expansion(old_policy: Dict[str, Any], new_policy: Dict[str, Any]) -> bool:
+    """
+    [P4] Non-Expansion Property Check.
+    M*_new <= M*_old
+    """
+    old_set = set(old_policy.get("minimum_allowed_fields", []))
+    new_set = set(new_policy.get("minimum_allowed_fields", []))
+    
+    is_subset = new_set.issubset(old_set)
+    
+    if not is_subset:
+        expanded_fields = new_set.difference(old_set)
+        print(f"[P4 VIOLATION] Policy Expansion Detected! New fields added: {expanded_fields}")
+        return False
+        
+    return True
+
+def trace_policy_source(merged_policy: MergedPolicy, all_drafts: List[PolicyDraft]) -> Dict[str, List[str]]:
+    """
+    [P5] Policy Source Tracing.
+    """
+    trace_map = {}
+    
+    for field in merged_policy.minimum_allowed_fields:
+        sources = []
+        for draft in all_drafts:
+            # Match Flow ID and Version
+            if draft.flow_id == merged_policy.flow_id and draft.policy_version == merged_policy.policy_version:
+                if field in draft.minimum_allowed_fields:
+                    sources.append(draft.source_leukocyte_id)
+        trace_map[field] = sources
+        
+    return trace_map
+
+def mock_formal_verification(merged_policies: Dict[str, MergedPolicy], global_rules: Set[str]) -> Dict[str, MergedPolicy]:
+    """
+    Verifies ALL merged policies against global rules.
+    """
+    validated_policies = {}
+    
+    for flow_id, policy in merged_policies.items():
+        current_allowed_fields = set(policy.minimum_allowed_fields)
+        
+        # Global Blacklist Check
+        violated_fields = current_allowed_fields.intersection(global_rules)
+        
+        if violated_fields:
+            print(f"\n[VERIFICATION FAIL] Flow '{flow_id}': Global Rule Violation: {violated_fields}")
+            print("-> Auto-fixing by removing violated fields.")
+            
+            fixed_allowed_fields = current_allowed_fields.difference(violated_fields)
+            
+            fixed_policy = MergedPolicy(
+                flow_id=policy.flow_id,
+                target_endpoint=policy.target_endpoint,
+                policy_version=policy.policy_version,
+                minimum_allowed_fields=sorted(list(fixed_allowed_fields)),
+                source_leukocytes=policy.source_leukocytes,
+                merged_timestamp=policy.merged_timestamp,
+                verification_status="FIXED_AND_VALIDATED",
+                verification_notes=f"Removed global violation fields: {violated_fields}"
+            )
+            validated_policies[flow_id] = fixed_policy
+        else:
+            print(f"[VERIFICATION SUCCESS] Flow '{flow_id}': Validated.")
+            validated_policy = MergedPolicy(
+                flow_id=policy.flow_id,
+                target_endpoint=policy.target_endpoint,
+                policy_version=policy.policy_version,
+                minimum_allowed_fields=policy.minimum_allowed_fields,
+                source_leukocytes=policy.source_leukocytes,
+                merged_timestamp=policy.merged_timestamp,
+                verification_status="VALIDATED_SUCCESS"
+            )
+            validated_policies[flow_id] = validated_policy
+            
+    return validated_policies
 
 # ----------------------------------------------------------------------
 # 3. 테스트 및 실행
 # ----------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("--- 🧠 Phase 2: 정책 통합 및 모의 검증 시작 ---")
-    print(f"대상 엔드포인트: {POLICY_DRAFT_INPUT[0]['target_endpoint']}")
-    print(f"전역 금지 규칙 (R_Global): {GLOBAL_FORBIDDEN_FIELDS}\n")
+    print("--- 🧠 Phase 19: Distributed Leukocyte Integration ---")
     
-    # 1단계: 분산 정책 통합 및 갈등 해결 (Merge)
-    print(">> 1. 분산 정책 통합 및 갈등 해결:")
-    merged_policy = merge_policies(POLICY_DRAFT_INPUT)
+    # Convert Dict inputs to PolicyDraft objects
+    draft_objects = [PolicyDraft(**d) for d in POLICY_DRAFT_INPUT]
     
-    print(f"\n통합된 정책 (교집합된 허용 필드): {merged_policy.get('minimum_allowed_fields')}")
-    print("  -> L-3C의 'customer_pii'와 L-2B의 'warehouse_id'는 L-1A에 없었으므로 제거됨 (가장 엄격한 정책 적용).")
+    print(f"Total Drafts: {len(draft_objects)}")
+    
+    # 1. Merge (Flow-based)
+    print("\n>> 1. Flow-based Policy Merge:")
+    merged_map = merge_policies(draft_objects)
+    
+    for flow_id, policy in merged_map.items():
+        print(f"\n[Flow] {flow_id}")
+        print(f"  - Version: {policy.policy_version}")
+        print(f"  - Allowed: {policy.minimum_allowed_fields}")
+        print(f"  - Sources: {policy.source_leukocytes}")
+        
+        # Verify Flow Isolation
+        if "AuthService" in flow_id:
+            assert "billing_code" not in policy.minimum_allowed_fields, "AuthService should NOT see billing_code"
+        if "BillingService" in flow_id:
+            # Note: L-Billing-2 removed 'billing_code', so intersection should remove it too!
+            # Wait, L-Billing-1 has it, L-Billing-2 does NOT. Intersection -> REMOVED.
+            # This is correct behavior for "Most Strict Wins".
+            pass
 
-    # 2단계: 모의 정형 검증 (Verification)
-    print("\n>> 2. 통합 정책에 대한 모의 정형 검증:")
-    final_policy, is_valid = mock_formal_verification(merged_policy, GLOBAL_FORBIDDEN_FIELDS)
+    # 2. Verification
+    print("\n>> 2. Global Verification:")
+    final_policies = mock_formal_verification(merged_map, GLOBAL_FORBIDDEN_FIELDS)
     
-    if not is_valid:
-        print("\n**검증 실패 및 자동 수정 완료.**")
-        print("최종 정책 (Data Plane 배포용):\n")
-        print(json.dumps(final_policy, indent=4, ensure_ascii=False))
-    else:
-        print("\n**검증 성공.**")
-        print("최종 정책 (Data Plane 배포용):\n")
-        print(json.dumps(final_policy, indent=4, ensure_ascii=False))
+    print("\n[Final SSoT Map]")
+    print(json.dumps({k: v.to_dict() for k, v in final_policies.items()}, indent=4, default=str))

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 #
-# Symbiosis Adaptive Security Framework: Autopilot Simulation
-# Orchestrates the full lifecycle: Calculation -> Integration -> Verification -> Compilation
-# Phase 6: Advanced Research Features (Profiling, Nested Fields, Info Flow, eBPF)
+# Symbiosis Adaptive Security Framework: Final Integrated Simulation
+# Phase 10: Full Lifecycle with Nested Field Support
+# Flow: Profiler -> Engine -> Integrator -> Compiler -> L7 Enforcement
 
 import json
 import datetime
@@ -13,6 +13,8 @@ from typing import Set, Dict, Any, List
 import policy_engine
 import policy_integrator
 import policy_compiler
+import policy_profiler
+import l7_enforcement_simulator
 from schemas import PolicyDraft, MergedPolicy, ExecutionArtifact
 
 # ----------------------------------------------------------------------
@@ -38,113 +40,145 @@ def log_info(message: str, component: str = "Simulation"):
     logger.info(message, extra={"component": component})
 
 # ----------------------------------------------------------------------
-# Step 0: Setup and Initial Data
+# Simulation Logic
 # ----------------------------------------------------------------------
 
 def run_simulation():
-    log_info("Starting Symbiosis Simulation (Phase 6: Advanced Research Features)")
+    log_info("Starting Symbiosis Final Integration Simulation (Nested Fields)")
 
-    # 0.1 Global Forbidden Fields
-    GLOBAL_FORBIDDEN_FIELDS: Set[str] = {
-        "user.credit_card",    # Nested PII
-        "admin_token",
-        "private_key_hash"
-    }
+    # ----------------------------------------------------------------------
+    # Step 1: Dynamic Profiling (Learning Phase)
+    # ----------------------------------------------------------------------
+    log_info("Step 1: Dynamic Profiling (Learning Phase)", "Profiler")
     
-    log_info(f"Global Security Rules: {list(GLOBAL_FORBIDDEN_FIELDS)}")
-
-    TARGET_ENDPOINT = "/api/v1/order/create"
+    profiler = policy_profiler.TrafficProfiler()
+    
+    # Mock Traffic Logs with Nested Fields
+    traffic_logs = [
+        # Legitimate Traffic
+        {
+            "requester_payload": {
+                "order": {"id": "ORD-001", "amount": 100},
+                "user": {"address": {"city": "Seoul", "zip": "12345"}}
+            },
+            "receiver_payload": {"status": "ok"}
+        },
+        {
+            "requester_payload": {
+                "order": {"id": "ORD-002", "amount": 200},
+                "user": {"address": {"city": "Busan", "zip": "67890"}}
+            },
+            "receiver_payload": {"status": "ok"}
+        },
+        # Anomalous Traffic (Contains PII 'credit_card' and 'debug_info')
+        {
+            "requester_payload": {
+                "order": {"id": "ORD-003", "amount": 300},
+                "user": {"address": {"city": "Incheon"}, "credit_card": "4111-xxxx"},
+                "debug_info": "trace_stack"
+            },
+            "receiver_payload": {"status": "ok"}
+        }
+    ]
+    
+    # Ingest Logs
+    for log in traffic_logs:
+        profiler.ingest_traffic_log(log)
+        
+    # Generate Dynamic Sets (Threshold 0.6 to include fields present in 2/3 logs)
+    # We want to learn 'order.id', 'order.amount', 'user.address.city' etc.
+    D_learned, _ = profiler.generate_field_set(threshold=0.6)
+    log_info(f"Learned D Set (Requester): {sorted(list(D_learned))}", "Profiler")
     
     # ----------------------------------------------------------------------
-    # Step 1: Dynamic Profiling & Nested Fields (Phase 1 Advanced)
+    # Step 2: Policy Calculation (Engine Phase)
     # ----------------------------------------------------------------------
-    log_info("Step 1: Dynamic Profiling & Nested Fields (Phase 1)", "Engine")
+    log_info("Step 2: Policy Calculation (Engine Phase)", "Engine")
     
-    # Simulate Raw Traffic Logs (Nested JSON)
-    traffic_logs_L1A = [
-        {"order": {"id": "101", "amount": 50}, "user": {"address": {"city": "Seoul"}}},
-        {"order": {"id": "102", "amount": 60}, "user": {"address": {"city": "Busan"}}}
-    ]
-    
-    traffic_logs_L2B = [
-        {"order": {"id": "103", "amount": 50}, "user": {"address": {"city": "Seoul", "zip": "12345"}}}, # Extra field: zip
-    ]
-    
-    traffic_logs_L3C = [
-        {"order": {"id": "104", "amount": 50}, "user": {"credit_card": "4111-xxxx", "address": {"city": "Seoul"}}} # PII!
-    ]
-    
-    # Profile Traffic to Extract D (Requester Set)
-    D_L1A = policy_engine.profile_traffic(traffic_logs_L1A)
-    log_info(f"[L-1A] Profiled D: {D_L1A}", "Engine")
-    
-    D_L2B = policy_engine.profile_traffic(traffic_logs_L2B)
-    log_info(f"[L-2B] Profiled D: {D_L2B}", "Engine")
-    
-    D_L3C = policy_engine.profile_traffic(traffic_logs_L3C)
-    log_info(f"[L-3C] Profiled D: {D_L3C} <--- WARNING: Contains Nested PII", "Engine")
-    
-    # Define Receiver Schema I (Nested)
+    # Define Receiver Schema I (Nested) - What the receiver actually needs
+    # Note: Receiver might not need 'user.address.zip' strictly, but let's say it does.
     I_Receiver = {
-        "order.id", "order.amount", "user.address.city", "user.address.zip"
+        "order", "order.id", "order.amount", 
+        "user", "user.address", "user.address.city", "user.address.zip"
     }
-    log_info(f"Receiver Schema I: {I_Receiver}", "Engine")
-
-    # Calculate Minimum Sets M = D \cap I
-    policy_drafts: List[PolicyDraft] = []
     
-    for idx, (D, leukocyte_id) in enumerate([(D_L1A, "L-1A"), (D_L2B, "L-2B"), (D_L3C, "L-3C")]):
-        M = policy_engine.calculate_minimum_set(D, I_Receiver)
-        draft = policy_engine.generate_policy_output(M, TARGET_ENDPOINT, leukocyte_id)
-        policy_drafts.append(draft)
-        log_info(f"[{leukocyte_id}] Calculated M: {draft.minimum_allowed_fields}", "Engine")
+    # Calculate Minimum Set M = D \cap I
+    M = policy_engine.calculate_minimum_set(D_learned, I_Receiver)
+    
+    # Create Policy Draft
+    draft = policy_engine.generate_policy_output(M, "/api/v1/order/create", "L-AUTO")
+    log_info(f"Calculated M: {draft.minimum_allowed_fields}", "Engine")
 
     # ----------------------------------------------------------------------
-    # Step 2: Conflict Resolution (Phase 2)
+    # Step 3: Integration & Verification (Integrator Phase)
     # ----------------------------------------------------------------------
-    log_info("Step 2: Conflict Resolution (Phase 2)", "Integrator")
-    merged_policy = policy_integrator.merge_policies(policy_drafts)
-    log_info(f"Merged Policy: {merged_policy.minimum_allowed_fields}", "Integrator")
-
-    # ----------------------------------------------------------------------
-    # Step 3: Information Flow Verification (Phase 2 Advanced)
-    # ----------------------------------------------------------------------
-    log_info("Step 3: Information Flow Verification (Phase 2)", "Verifier")
+    log_info("Step 3: Integration & Verification (Integrator Phase)", "Integrator")
     
-    # Verify against Global Rules AND Information Flow (M <= I)
-    # Note: In this simulation, M is derived from Intersection with I, so M <= I is naturally true.
-    # To demonstrate the check, let's inject a field into Merged Policy that is NOT in I.
+    # Merge (Single draft in this case, but logic holds)
+    merged_policy = policy_integrator.merge_policies([draft])
     
-    # Injecting 'extra_field' to simulate a policy drift or attack
-    merged_policy.minimum_allowed_fields.append("malicious.extra_field")
-    log_info(f"Injecting 'malicious.extra_field' to test Information Flow Check...", "Verifier")
+    # Global Rules (Nested PII)
+    GLOBAL_FORBIDDEN_FIELDS = {"user.credit_card", "debug_info"}
     
+    # Verify
     validated_policy, is_valid = policy_integrator.mock_formal_verification(
         merged_policy, 
-        GLOBAL_FORBIDDEN_FIELDS, 
-        receiver_schema=I_Receiver # Passing I for Information Flow Check
+        GLOBAL_FORBIDDEN_FIELDS,
+        receiver_schema=I_Receiver
     )
     
     if is_valid:
-        log_info("Verification Passed.", "Verifier")
+        log_info("Verification Passed.", "Integrator")
     else:
-        log_info("Verification Failed (Auto-Corrected).", "Verifier")
-        log_info(f"Final Validated Policy: {validated_policy.minimum_allowed_fields}", "Verifier")
+        log_info("Verification Failed (Auto-Corrected).", "Integrator")
+        log_info(f"Final Validated Policy: {validated_policy.minimum_allowed_fields}", "Integrator")
 
     # ----------------------------------------------------------------------
-    # Step 4: eBPF Artifact Generation (Phase 3 Advanced)
+    # Step 4: Compilation (Compiler Phase)
     # ----------------------------------------------------------------------
-    log_info("Step 4: eBPF Artifact Generation (Phase 3)", "Compiler")
+    log_info("Step 4: Compilation (Compiler Phase)", "Compiler")
     
     artifact = policy_compiler.compile_to_data_plane_artifact(validated_policy)
-    ebpf_code = policy_compiler.generate_ebpf_map_config(artifact)
+    log_info(f"Compiled Artifact Map: {json.dumps(artifact.allowed_fields_map)}", "Compiler")
+
+    # ----------------------------------------------------------------------
+    # Step 5: L7 Enforcement Simulation (Data Plane Phase)
+    # ----------------------------------------------------------------------
+    log_info("Step 5: L7 Enforcement Simulation (Data Plane Phase)", "Simulator")
     
-    log_info("Generated eBPF Map Configuration:", "Compiler")
-    print("\n--- eBPF Code Snippet ---")
-    print(ebpf_code)
-    print("-------------------------\n")
+    # Initialize Filter with Compiled Artifact
+    l7_filter = l7_enforcement_simulator.L7EnforcementFilter(artifact.allowed_fields_map)
     
-    log_info("Symbiosis Advanced Simulation Complete.")
+    # Test Payload 1: Legitimate (Should Pass)
+    payload_legit = json.dumps({
+        "order": {"id": "ORD-999", "amount": 500},
+        "user": {"address": {"city": "Jeju", "zip": "99999"}}
+    })
+    
+    res_legit, success_legit = l7_filter.process_payload(payload_legit, action='SCRUB')
+    log_info(f"[Test 1] Legitimate Payload -> Success: {success_legit}", "Simulator")
+    
+    # Test Payload 2: Contains Unauthorized/PII Fields (Should be Scrubbed)
+    # 'user.credit_card' is NOT in M (filtered by Intersection with I or Global Rules)
+    # 'debug_info' is NOT in M
+    payload_dirty = json.dumps({
+        "order": {"id": "ORD-888", "amount": 600},
+        "user": {"address": {"city": "Daegu", "zip": "12345"}, "credit_card": "4111-xxxx"},
+        "debug_info": "dump"
+    })
+    
+    res_dirty, success_dirty = l7_filter.process_payload(payload_dirty, action='SCRUB')
+    log_info(f"[Test 2] Dirty Payload -> Success: {success_dirty}", "Simulator")
+    log_info(f"Scrubbed Result: {res_dirty}", "Simulator")
+    
+    # Verify Scrubbing
+    scrubbed_json = json.loads(res_dirty)
+    if "credit_card" not in scrubbed_json.get("user", {}) and "debug_info" not in scrubbed_json:
+        log_info("SUCCESS: PII and Unauthorized fields were correctly scrubbed.", "Simulator")
+    else:
+        log_info("FAILURE: Scrubbing failed.", "Simulator")
+
+    log_info("Symbiosis Final Integration Simulation Complete.")
 
 if __name__ == "__main__":
     run_simulation()

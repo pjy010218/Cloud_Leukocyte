@@ -12,6 +12,7 @@ class PolicyDraft:
     minimum_allowed_fields: List[str]
     source_leukocyte_id: str
     timestamp: str
+    flow_id: str = "default_flow" # New field for Distributed Leukocytes
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -26,6 +27,7 @@ class MergedPolicy:
     minimum_allowed_fields: List[str]
     source_leukocytes: List[str]
     merged_timestamp: str
+    flow_id: str = "default_flow" # New field for Distributed Leukocytes
     verification_status: str = "PENDING"
     verification_notes: Optional[str] = None
 

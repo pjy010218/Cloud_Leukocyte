@@ -17,9 +17,26 @@ class TrafficProfiler:
         # Total number of logs processed
         self.total_logs = 0
 
+    def _extract_all_keys(self, data: Dict[str, Any], parent_key: str = '') -> Set[str]:
+        """
+        Recursively extracts all keys from a nested dictionary in dot notation.
+        Example: {"user": {"address": {"city": "Seoul"}}} -> {"user", "user.address", "user.address.city"}
+        
+        Note: Whether to include intermediate keys (e.g. "user", "user.address") depends on policy.
+        Here we include leaf nodes and intermediate nodes to allow fine-grained control.
+        """
+        keys = set()
+        for k, v in data.items():
+            current_key = f"{parent_key}.{k}" if parent_key else k
+            keys.add(current_key)
+            if isinstance(v, dict):
+                keys.update(self._extract_all_keys(v, current_key))
+        return keys
+
     def ingest_traffic_log(self, log_entry: Dict[str, Any]):
         """
         Ingests a single traffic log entry and updates field frequency counts.
+        Supports nested fields via recursive extraction.
         
         Args:
             log_entry: A dictionary containing 'requester_payload' and 'receiver_payload'.
@@ -28,13 +45,14 @@ class TrafficProfiler:
         
         # Extract fields from requester payload (D candidate)
         if 'requester_payload' in log_entry:
-            for field in log_entry['requester_payload'].keys():
+            flattened_keys = self._extract_all_keys(log_entry['requester_payload'])
+            for field in flattened_keys:
                 self.requester_field_counts[field] += 1
                 
         # Extract fields from receiver payload (I candidate)
-        # In a real scenario, this might be response data or internal processing logs
         if 'receiver_payload' in log_entry:
-            for field in log_entry['receiver_payload'].keys():
+            flattened_keys = self._extract_all_keys(log_entry['receiver_payload'])
+            for field in flattened_keys:
                 self.receiver_field_counts[field] += 1
 
     def generate_field_set(self, threshold: float = 0.95) -> Tuple[Set[str], Set[str]]:

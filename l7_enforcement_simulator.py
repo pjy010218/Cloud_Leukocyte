@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Tuple, Optional, List, Set
 
 class L7EnforcementFilter:
     """
@@ -15,16 +15,37 @@ class L7EnforcementFilter:
         # O(1) lookup structure
         self.allowed_fields_map = allowed_fields_map
 
+    def _flatten_keys(self, data: Dict[str, Any], parent_key: str = '') -> Set[str]:
+        """Helper to extract all keys in dot notation from the payload."""
+        keys = set()
+        for k, v in data.items():
+            current_key = f"{parent_key}.{k}" if parent_key else k
+            keys.add(current_key)
+            if isinstance(v, dict):
+                keys.update(self._flatten_keys(v, current_key))
+        return keys
+
+    def _delete_nested_field(self, data: Dict[str, Any], field_path: str):
+        """
+        Deletes a field specified by dot notation (e.g., 'user.address.city') from data.
+        """
+        parts = field_path.split('.')
+        current = data
+        # Traverse to the parent of the target field
+        for part in parts[:-1]:
+            if part in current and isinstance(current[part], dict):
+                current = current[part]
+            else:
+                return # Path doesn't exist, nothing to delete
+        
+        # Delete the target field
+        target = parts[-1]
+        if target in current:
+            del current[target]
+
     def process_payload(self, payload_json: str, action: str = 'SCRUB') -> Tuple[Optional[str], bool]:
         """
-        Processes the inbound JSON payload.
-        
-        Args:
-            payload_json: The raw JSON string.
-            action: 'SCRUB' (remove unauthorized fields) or 'BLOCK' (deny if unauthorized fields exist).
-            
-        Returns:
-            Tuple[Optional[str], bool]: (Modified JSON string or None, Success/Allowed status)
+        Processes the inbound JSON payload with nested field support.
         """
         try:
             payload = json.loads(payload_json)
@@ -37,8 +58,8 @@ class L7EnforcementFilter:
             return None, False
 
         # Identify unauthorized fields
-        # Using list(payload.keys()) to iterate safely
-        input_fields = list(payload.keys())
+        # We flatten the payload keys to check against the allowed map (which uses dot notation)
+        input_fields = self._flatten_keys(payload)
         unauthorized_fields = []
         
         for field in input_fields:
@@ -52,9 +73,10 @@ class L7EnforcementFilter:
                 print(f"[BLOCK] Unauthorized fields detected: {unauthorized_fields}")
                 return None, False
             
-            # Check for missing essential fields (Requirement 3.2)
-            # Assuming 'allowed_fields' are treated as 'required' for this simulation context
-            missing_fields = [f for f in self.allowed_fields_map if f not in payload]
+            # Check for missing essential fields
+            # Note: Checking existence of nested fields in payload is complex without flattening.
+            # We reuse input_fields (set of present keys) for efficient checking.
+            missing_fields = [f for f in self.allowed_fields_map if f not in input_fields]
             if missing_fields:
                  print(f"[BLOCK] Missing essential fields: {missing_fields}")
                  return None, False
@@ -65,12 +87,15 @@ class L7EnforcementFilter:
         elif action == 'SCRUB':
             if unauthorized_fields:
                 print(f"[SCRUB] Removing unauthorized fields: {unauthorized_fields}")
+                # Sort by depth (descending) to delete children before parents if needed, 
+                # though _delete_nested_field handles leaf deletion fine.
+                # We iterate and delete.
                 for field in unauthorized_fields:
-                    del payload[field]
+                    self._delete_nested_field(payload, field)
             
-            # Check for missing essential fields (Requirement 3.2)
-            # "만약 필드 제거 후에도 필수 필드(allowed_fields) 중 하나라도 누락되었다면 정책 위반으로 간주합니다."
-            missing_fields = [f for f in self.allowed_fields_map if f not in payload]
+            # Re-verify essential fields after scrubbing
+            remaining_fields = self._flatten_keys(payload)
+            missing_fields = [f for f in self.allowed_fields_map if f not in remaining_fields]
             if missing_fields:
                  print(f"[SCRUB FAIL] Missing essential fields after scrubbing: {missing_fields}")
                  return None, False
