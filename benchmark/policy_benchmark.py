@@ -68,13 +68,45 @@ def measure_flat_set_intersection(set_a: Set[str], set_b: Set[str]):
     return policy_engine.calculate_minimum_set(set_a, set_b)
 
 def measure_trie_intersection(list_a: List[str], list_b: List[str]):
-    trie_a = hierarchical_policy_engine.PolicyTrie()
-    for f in list_a: trie_a.insert(f)
+    trie_a = hierarchical_policy_engine.HierarchicalPolicyEngine()
+    for f in list_a: trie_a.allow_path(f)
         
-    trie_b = hierarchical_policy_engine.PolicyTrie()
-    for f in list_b: trie_b.insert(f)
+    trie_b = hierarchical_policy_engine.HierarchicalPolicyEngine()
+    for f in list_b: trie_b.allow_path(f)
         
-    return hierarchical_policy_engine.calculate_hierarchical_intersection(trie_a, trie_b)
+    # calculate_hierarchical_intersection is likely not defined in the module either based on file content.
+    # The file content of hierarchical_policy_engine.py shows NO 'calculate_hierarchical_intersection' function.
+    # It only has the class.
+    # The benchmark seems to rely on a function that doesn't exist in the current version of the engine.
+    # I need to implement a helper for intersection or check if I missed something.
+    # Looking at the file content again... lines 1-159... NO standalone functions.
+    # So I need to implement the intersection logic here or add it to the engine.
+    # For benchmark purposes, let's implement a simple intersection helper here that traverses both tries.
+    
+    return calculate_hierarchical_intersection(trie_a, trie_b)
+
+def calculate_hierarchical_intersection(engine_a, engine_b):
+    """
+    Calculates intersection of two HierarchicalPolicyEngines.
+    Returns count of common allowed paths (simplified metric).
+    """
+    common_count = 0
+    # We need to traverse one and check the other.
+    # Since we don't have a list of all paths easily from the trie without traversal,
+    # let's do a recursive traversal on A and check existence in B.
+    
+    def traverse(node_a, path_parts):
+        nonlocal common_count
+        if node_a.is_allowed:
+            path = ".".join(path_parts)
+            if engine_b.check_access(path) == "ALLOWED":
+                common_count += 1
+        
+        for key, child in node_a.children.items():
+            traverse(child, path_parts + [key])
+
+    traverse(engine_a.root, [])
+    return common_count
 
 def run_benchmark_suite():
     print("--- 📊 Symbiosis Policy Engine Benchmark ---")
@@ -123,14 +155,14 @@ def run_benchmark_suite():
         # Let's measure Intersection ONLY to be fair to the algorithm comparison.
         # So we build Tries outside the timer.
         
-        trie_a = hierarchical_policy_engine.PolicyTrie()
-        for f in list_a: trie_a.insert(f)
-        trie_b = hierarchical_policy_engine.PolicyTrie()
-        for f in list_b: trie_b.insert(f)
+        trie_a = hierarchical_policy_engine.HierarchicalPolicyEngine()
+        for f in list_a: trie_a.allow_path(f)
+        trie_b = hierarchical_policy_engine.HierarchicalPolicyEngine()
+        for f in list_b: trie_b.allow_path(f)
         
         tracemalloc.start()
         start_time = timeit.default_timer()
-        hierarchical_policy_engine.calculate_hierarchical_intersection(trie_a, trie_b)
+        calculate_hierarchical_intersection(trie_a, trie_b)
         trie_time = (timeit.default_timer() - start_time) * 1000 # ms
         current, peak = tracemalloc.get_traced_memory()
         trie_mem = peak / 1024 # KB
