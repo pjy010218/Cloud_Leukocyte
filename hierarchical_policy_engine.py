@@ -117,6 +117,32 @@ class HierarchicalPolicyEngine:
                 return True
         return False
 
+    def flatten(self) -> List[str]:
+        """
+        Exports all allowed paths as a flat list.
+        Used for "Compile-to-Flat" optimization (O(1) lookup).
+        """
+        results = []
+        self._flatten_recursive(self.root, "", results)
+        return results
+
+    def _flatten_recursive(self, node: TrieNode, current_path: str, results: List[str]):
+        """
+        Recursive helper for flattening.
+        """
+        if node.is_allowed and not node.is_suppressed:
+            results.append(current_path)
+        
+        for key, child in node.children.items():
+            # If suppressed, don't traverse down (pruning) - or traverse but respect suppression?
+            # Policy Logic: If a node is suppressed, can its children be allowed?
+            # Current check_access says: if node.is_suppressed -> BLOCKED.
+            # So if a parent is suppressed, all children are effectively blocked.
+            # So we should NOT traverse if suppressed.
+            if not node.is_suppressed:
+                next_path = f"{current_path}.{key}" if current_path else key
+                self._flatten_recursive(child, next_path, results)
+
 # ----------------------------------------------------------------------
 # Test Scenarios
 # ----------------------------------------------------------------------

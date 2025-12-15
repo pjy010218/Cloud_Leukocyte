@@ -46,6 +46,11 @@ else
     echo "Skipping attack_simulation.py (not found)"
 fi
 
+echo "[Phase 5] Compile-to-Flat Optimization..."
+if [ -f "tests/test_policy_compiler_flattening.py" ]; then
+    python3 tests/test_policy_compiler_flattening.py
+fi
+
 echo "[Phase 6] Data Plane Benchmark..."
 if [ -f "benchmark/benchmark_lookup_performance.py" ]; then
     python3 benchmark/benchmark_lookup_performance.py

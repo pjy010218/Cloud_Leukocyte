@@ -13,19 +13,20 @@ from typing import Dict, Any, List
 from schemas import MergedPolicy, ExecutionArtifact
 import datetime
 
-def compile_to_data_plane_artifact(validated_policy: MergedPolicy) -> ExecutionArtifact:
+def compile_to_data_plane_artifact(policy_engine, target_endpoint: str, policy_version: int) -> ExecutionArtifact:
     """
-    검증된 정책을 Data Plane(Envoy/eBPF)에서 즉시 사용할 수 있는 
+    검증된 정책(HierarchicalPolicyEngine)을 Data Plane(Envoy/eBPF)에서 즉시 사용할 수 있는 
     고성능 룩업(Lookup) 지향 아티팩트 형태로 변환합니다.
     
     [Rule P.1 준수: Minimize Data Plane Overhead]
     Data Plane은 수많은 패킷을 실시간으로 처리해야 하므로, 필드 검사 로직은
-    반드시 O(1) 시간 복잡도를 가져야 합니다. 이를 위해 리스트 형태의 필드 목록을
+    반드시 O(1) 시간 복잡도를 가져야 합니다. 이를 위해 Trie를 Flattening하여
     해시 맵(Dictionary) 구조로 변환합니다.
     """
     
-    # 1. 필드 리스트 추출
-    allowed_fields_list = validated_policy.minimum_allowed_fields
+    # 1. Trie Flattening (Compile-to-Flat)
+    # HierarchicalPolicyEngine의 flatten() 메서드를 사용하여 모든 허용된 경로를 추출합니다.
+    allowed_fields_list = policy_engine.flatten()
     
     # 2. O(1) Lookup을 위한 Hash Map 변환
     # Key: 필드명, Value: 1 (존재 여부만 확인하면 되므로 최소한의 값 사용)
@@ -35,13 +36,13 @@ def compile_to_data_plane_artifact(validated_policy: MergedPolicy) -> ExecutionA
     # 3. 실행 아티팩트 생성
     return ExecutionArtifact(
         artifact_version="1.0",
-        target_endpoint=validated_policy.target_endpoint,
+        target_endpoint=target_endpoint,
         action="ALLOW",
         allowed_fields_map=allowed_fields_map,
         metadata={
-            "source_policy_version": validated_policy.policy_version,
+            "source_policy_version": policy_version,
             "compiled_at": datetime.datetime.now().isoformat(),
-            "optimization_note": "Optimized for O(1) field lookup using Hash Map."
+            "optimization_note": "Optimized for O(1) field lookup using Hash Map (Compile-to-Flat)."
         }
     )
 
@@ -171,22 +172,27 @@ if __name__ == "__main__":
     import dataclasses
     import sys
     
-    # 3.1 모의 입력 데이터 (검증된 정책 객체)
-    # Phase 2에서 검증 완료된 MergedPolicy 객체를 시뮬레이션
-    FINAL_VALIDATED_POLICY = MergedPolicy(
-        target_endpoint="/api/v1/inventory/reserve",
-        minimum_allowed_fields=["order_amount", "shipping_address", "sku"],
-        verification_status="VALIDATED_SUCCESS",
-        policy_version=1,
-        merged_timestamp="2025-12-01T12:00:00Z",
-        source_leukocytes=["L-TEST"]
-    )
+    # 3.1 모의 입력 데이터 (HierarchicalPolicyEngine)
+    try:
+        from hierarchical_policy_engine_cython import HierarchicalPolicyEngine
+        print("[Info] Using Cython Engine")
+    except ImportError:
+        from hierarchical_policy_engine import HierarchicalPolicyEngine
+        print("[Info] Using Python Engine")
 
-    print("--- 🚀 Phase 3: 정책 컴파일러 및 실행 아티팩트 생성 ---")
-    print(f"입력 정책 (Validated Policy): {dataclasses.asdict(FINAL_VALIDATED_POLICY)}")
+    engine = HierarchicalPolicyEngine()
+    engine.allow_path("order_amount")
+    engine.allow_path("shipping_address.city")
+    engine.allow_path("sku")
+    
+    # Suppression Test
+    engine.allow_path("payload.content")
+    engine.suppress_path("payload.content")
+
+    print("--- 🚀 Phase 3: 정책 컴파일러 및 실행 아티팩트 생성 (Compile-to-Flat) ---")
     
     # 컴파일 실행
-    execution_artifact = compile_to_data_plane_artifact(FINAL_VALIDATED_POLICY)
+    execution_artifact = compile_to_data_plane_artifact(engine, "/api/v1/inventory/reserve", 1)
     
     print("\n>> 생성된 실행 아티팩트 (Data Plane Artifact):")
     print(json.dumps(dataclasses.asdict(execution_artifact), indent=4))

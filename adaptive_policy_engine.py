@@ -2,40 +2,48 @@
 import time
 from typing import Dict, Tuple, Set
 
-class AdaptivePolicyEngine:
+import time
+from typing import Dict, Tuple, Set
+try:
+    from hierarchical_policy_engine_cython import HierarchicalPolicyEngine
+except ImportError:
+    from hierarchical_policy_engine import HierarchicalPolicyEngine
+
+class AdaptivePolicyEngine(HierarchicalPolicyEngine):
     """
     Adaptive Policy Engine that handles Schema Evolution using a Grace Period mechanism.
     Reduces False Positives for new, legitimate fields.
     """
     def __init__(self, grace_period=3600, threshold=100):
-        self.whitelist: Set[str] = set()
+        super().__init__()
         self.candidate_fields: Dict[str, Tuple[float, int]] = {}  # path -> (first_seen_timestamp, count)
         self.grace_period = grace_period  # Seconds before auto-whitelisting
         self.threshold = threshold        # Min requests before auto-whitelisting
     
-    def allow_path(self, path: str):
-        """Manually whitelist a path."""
-        self.whitelist.add(path)
-
     def check_access(self, path: str) -> str:
         """
         Checks access with adaptive logic.
-        Returns: "ALLOWED", "ALLOWED_TRIAL", "DENIED_UNKNOWN"
+        Returns: "ALLOWED", "ALLOWED_TRIAL", "DENIED_UNKNOWN", "BLOCKED_SUPPRESSED"
         """
-        # 1. Whitelist Check
-        if path in self.whitelist:
-            return "ALLOWED"
+        # 1. Base Engine Check (Trie)
+        decision = super().check_access(path)
         
-        # 2. Candidate Check (Schema Evolution)
+        if decision == "ALLOWED":
+            return "ALLOWED"
+        if decision == "BLOCKED_SUPPRESSED":
+            return "BLOCKED_SUPPRESSED"
+            
+        # If DENIED_NOT_FOUND, check for adaptation (Schema Evolution)
+        # 2. Candidate Check
         current_time = time.time()
         
         if path in self.candidate_fields:
             first_seen, count = self.candidate_fields[path]
             
             # Check if criteria met for Auto-Whitelisting
-            if (current_time - first_seen > self.grace_period) and (count > self.threshold):
-                self.whitelist.add(path)
-                del self.candidate_fields[path] # Promote to whitelist
+            if (current_time - first_seen > self.grace_period) and (count >= self.threshold):
+                self.allow_path(path) # Promote to whitelist in Trie
+                del self.candidate_fields[path]
                 return "ALLOWED"
             
             # Update count
@@ -44,13 +52,7 @@ class AdaptivePolicyEngine:
         
         # 3. First Appearance
         self.candidate_fields[path] = (current_time, 1)
-        return "DENIED_UNKNOWN" # Block first time or allow trial depending on policy. 
-                                # User prompt said "ALLOWED_TRIAL" for candidates, 
-                                # but usually first packet is blocked or allowed trial?
-                                # User code:
-                                # if path in candidate: ... return ALLOWED_TRIAL
-                                # else: candidate[path] = ... return DENIED_UNKNOWN
-                                # So first packet is DENIED.
+        return "DENIED_UNKNOWN" # Block first time
         
 # Test Scenario
 if __name__ == "__main__":
@@ -74,4 +76,4 @@ if __name__ == "__main__":
     print(f"3. After grace period '{path}': {engine.check_access(path)}")
     # Expected: ALLOWED (Promoted)
     
-    print(f"4. Verify Whitelist: {path in engine.whitelist}")
+    print(f"4. Verify Whitelist: {engine.check_access(path) == 'ALLOWED'}")

@@ -152,6 +152,10 @@ def run_coevolution_simulation():
     
     history_bypass_rate = []
     history_defender_fp = []
+    defender_error_rates = []
+    defender_smoothed_error = []
+    attacker_bypass_rates = []
+    unique_attacks_count = []
     
     bypass_count = 0
     attack_count = 0
@@ -233,24 +237,29 @@ def run_coevolution_simulation():
         next_state = defender.get_state(n_path, n_feat)
         defender.learn(state, action, defender_reward, next_state)
         
-        # --- Metrics ---
+        # --- Metrics Collection ---
+        unique_attacks_count.append(len(attacker.successful_paths))
+        # Calculate error rate for this episode (0 or 1)
+        # Error = Bypass (FN) or False Positive (FP)
+        error = 1 if (attacker_success or is_fp) else 0
+        defender_error_rates.append(error)
+        
+        # Calculate running average for smoother convergence check
+        if len(defender_error_rates) > window_size:
+            avg_error = sum(defender_error_rates[-window_size:]) / window_size
+            defender_smoothed_error.append(avg_error)
+        else:
+            defender_smoothed_error.append(error) # Initial noise
+            
+        attacker_bypass_rates.append(1 if attacker_success else 0)
+        
         results_window.append((1 if attacker_success else 0, 1 if is_fp else 0))
         if len(results_window) > window_size:
             results_window.pop(0)
             
         if (episode + 1) % 200 == 0:
-            # Calculate rates from window
             bypasses = sum(x[0] for x in results_window)
             fps = sum(x[1] for x in results_window)
-            # Normalize by approximate counts in window (assuming 50/50 split roughly)
-            # Or just raw counts/window size for trend
-            
-            # Let's be more precise:
-            # Bypass Rate = Bypasses / Total Attacks in Window
-            # FP Rate = FPs / Total Normal in Window
-            # But we don't track type in window easily without storing it.
-            # Let's just print the raw counts in the last 100 requests.
-            
             print(f"Episode {episode+1}: Last 100 reqs -> Bypasses: {bypasses}, FPs: {fps}")
             print(f"  Defender Epsilon: {defender.epsilon:.2f}, Attacker Epsilon: {attacker.epsilon:.2f}")
             print(f"  Sample Attack Path: {path}")
@@ -264,25 +273,13 @@ def run_coevolution_simulation():
     print(f"Final Attacker Known Successful Paths: {len(attacker.successful_paths)}")
     print(f"Sample Successful Paths: {list(attacker.successful_paths)[:5]}")
 
-    # The following code block is added after the simulation loop
-    # but before the final summary prints.
-    # Note: defender_error_rates, attacker_bypass_rates, unique_attacks_count, np, and plt
-    # are not defined in the provided context. Assuming they would be defined elsewhere
-    # or are placeholders for a more complete example.
-    # For this change, I'm placing the code as requested, assuming the necessary imports
-    # and data structures would be present in a full working version.
-
-    # Placeholder for missing variables to make the snippet syntactically valid
-    # In a real scenario, these would be collected during the simulation loop.
-    defender_error_rates = [0.1, 0.08, 0.07, 0.06, 0.05] # Example data
-    attacker_bypass_rates = [0.5, 0.4, 0.3, 0.2, 0.1] # Example data
-    unique_attacks_count = [10, 15, 20, 25, 30] # Example data
     import numpy as np
     import matplotlib.pyplot as plt
 
     print("\n--- Simulation Results ---")
-    print(f"Final Defender Error Rate: {defender_error_rates[-1]:.4f}")
-    print(f"Final Attacker Bypass Rate: {attacker_bypass_rates[-1]:.4f}")
+    # Use smoothed error for convergence check
+    final_error = defender_smoothed_error[-1] if defender_smoothed_error else 0
+    print(f"Final Defender Error Rate (Smoothed): {final_error:.4f}")
     
     # Convergence Check
     def check_convergence(history, window=1000):
@@ -295,20 +292,25 @@ def run_coevolution_simulation():
         else:
             return False, f"Variance: {variance:.6f}"
 
-    is_converged, status = check_convergence(defender_error_rates)
+    is_converged, status = check_convergence(defender_smoothed_error)
     print(f"Defender Convergence: {is_converged} ({status})")
     
     # Plotting
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(defender_error_rates, label='Defender Error Rate')
-    plt.plot(attacker_bypass_rates, label='Attacker Bypass Rate', alpha=0.7)
+    # Plot moving average for readability
+    def moving_average(a, n=100) :
+        ret = np.cumsum(a, dtype=float)
+        ret[n:] = ret[n:] - ret[:-n]
+        return ret[n - 1:] / n
+
+    plt.plot(moving_average(defender_error_rates), label='Defender Error Rate (MA)')
+    plt.plot(moving_average(attacker_bypass_rates), label='Attacker Bypass Rate (MA)', alpha=0.7)
     plt.title('Co-evolution Dynamics')
     plt.xlabel('Episode')
     plt.ylabel('Rate')
     plt.legend()
     
-    plt.subplot(1, 2, 2)
     plt.plot(unique_attacks_count, label='Unique Attacks')
     plt.title('Attacker Diversity')
     plt.xlabel('Episode')
