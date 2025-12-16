@@ -7,7 +7,7 @@
 import json
 import datetime
 from typing import Set, Dict, Any, List, Tuple
-from schemas import PolicyDraft, MergedPolicy
+from infrastructure.schemas import PolicyDraft, MergedPolicy
 
 # ----------------------------------------------------------------------
 # 1. 데이터 모델 및 샘플 데이터 (Leukocyte 정책 출력 시뮬레이션)

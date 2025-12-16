@@ -5,7 +5,7 @@
 
 import json
 from typing import Dict, Any, List
-from hierarchical_policy_engine import HierarchicalPolicyEngine, TrieNode
+from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine, TrieNode
 
 def serialize_trie_node(node: TrieNode) -> Dict[str, Any]:
     """

@@ -1,7 +1,6 @@
 import json
 from typing import Set, Dict, Any
-
-from schemas import PolicyDraft
+from infrastructure.schemas import PolicyDraft
 import datetime
 from typing import List, Dict, Any, Set
 

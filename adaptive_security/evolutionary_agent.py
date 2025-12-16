@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import random
 from typing import Dict, List, Tuple, Optional
-from hierarchical_policy_engine import HierarchicalPolicyEngine, TrieNode
+from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine, TrieNode
 
 # Constants for Actions
 ACTION_ALLOW = 0

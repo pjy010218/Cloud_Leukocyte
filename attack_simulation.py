@@ -7,7 +7,7 @@
 import random
 import time
 from typing import List, Dict
-from hierarchical_policy_engine import HierarchicalPolicyEngine
+from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine, TrieNode
 
 # ----------------------------------------------------------------------
 # 1. Dataset Generation

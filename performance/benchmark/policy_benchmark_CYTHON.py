@@ -11,10 +11,14 @@ from typing import List
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import Cython Engine
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 try:
-    import hierarchical_policy_engine_cython
+    from hierarchical_control import hierarchical_policy_engine_cython
 except ImportError:
-    print("Error: Could not import hierarchical_policy_engine_cython. Make sure it is built.")
+    print("Error: Could not import hierarchical_control.hierarchical_policy_engine_cython. Make sure it is built.")
     sys.exit(1)
 
 def generate_random_string(length=5):

@@ -3,10 +3,14 @@
 # Phase 20: Service Identity Policy Generator (IAM Role Policy)
 # Aggregates permissions from Flow-Specific SSoT to generate Service Identity PoLP.
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import json
 from typing import Dict, Set, Any, List
-from schemas import PolicyDraft, MergedPolicy
-import policy_integrator
+from infrastructure.schemas import PolicyDraft, MergedPolicy
+from policy_integration import policy_integrator
 
 def analyze_service_permissions(ssot_map: Dict[str, MergedPolicy]) -> Dict[str, Set[str]]:
     """

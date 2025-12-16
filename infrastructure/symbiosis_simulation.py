@@ -4,18 +4,22 @@
 # Phase 10: Full Lifecycle with Nested Field Support
 # Flow: Profiler -> Engine -> Integrator -> Compiler -> L7 Enforcement
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import json
 import datetime
 import logging
 from typing import Set, Dict, Any, List
 
 # Internal Module Imports
-import policy_engine
-import policy_integrator
-import policy_compiler
-import policy_profiler
-import l7_enforcement_simulator
-from schemas import PolicyDraft, MergedPolicy, ExecutionArtifact
+from policy_learning import policy_engine
+from policy_integration import policy_integrator
+from compilation import policy_compiler
+from policy_learning import policy_profiler
+from data_plane import l7_enforcement_simulator
+from infrastructure.schemas import PolicyDraft, MergedPolicy, ExecutionArtifact
 
 # ----------------------------------------------------------------------
 # Logging Setup
@@ -121,17 +125,25 @@ def run_simulation():
     GLOBAL_FORBIDDEN_FIELDS = {"user.credit_card", "debug_info"}
     
     # Verify
-    validated_policy, is_valid = policy_integrator.mock_formal_verification(
+    # Verify
+    validated_policies_map = policy_integrator.mock_formal_verification(
         merged_policy, 
-        GLOBAL_FORBIDDEN_FIELDS,
-        receiver_schema=I_Receiver
+        GLOBAL_FORBIDDEN_FIELDS
     )
     
-    if is_valid:
+    # Get the first (and only) policy
+    if not validated_policies_map:
+        log_info("Verification returned empty map.", "Integrator")
+        return
+        
+    validated_policy = list(validated_policies_map.values())[0]
+    
+    if validated_policy.verification_status.startswith("VALIDATED"):
         log_info("Verification Passed.", "Integrator")
     else:
-        log_info("Verification Failed (Auto-Corrected).", "Integrator")
-        log_info(f"Final Validated Policy: {validated_policy.minimum_allowed_fields}", "Integrator")
+        log_info(f"Verification Check: {validated_policy.verification_status}", "Integrator")
+    
+    log_info(f"Final Validated Policy: {validated_policy.minimum_allowed_fields}", "Integrator")
 
     # ----------------------------------------------------------------------
     # Step 4: Compilation (Compiler Phase)

@@ -7,10 +7,10 @@ import string
 import numpy as np
 from typing import List, Set
 
-# Adjust path to import modules from parent directory
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Adjust sys.path to include project root
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-import hierarchical_policy_engine
+from hierarchical_control import hierarchical_policy_engine
 
 def generate_random_string(length=5):
     return ''.join(random.choices(string.ascii_lowercase, k=length))

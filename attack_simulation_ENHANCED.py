@@ -7,8 +7,8 @@ from typing import List, Dict
 # Adjust path to import modules from parent directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import hierarchical_policy_engine
-from adaptive_policy_engine import AdaptivePolicyEngine
+from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine
+from adaptive_security.adaptive_policy_engine import AdaptivePolicyEngine
 import time
 
 def generate_realistic_attack_dataset(total=1000):

@@ -9,24 +9,26 @@ from typing import Dict, Any, List
 # ----------------------------------------------------------------------
 # 1. 데이터 모델 (Input: Phase 2에서 검증된 정책)
 # ----------------------------------------------------------------------
-
-from schemas import MergedPolicy, ExecutionArtifact
+from infrastructure.schemas import MergedPolicy, ExecutionArtifact
 import datetime
 
-def compile_to_data_plane_artifact(policy_engine, target_endpoint: str, policy_version: int) -> ExecutionArtifact:
+def compile_to_data_plane_artifact(policy_input, target_endpoint: str = None, policy_version: int = None) -> ExecutionArtifact:
     """
-    검증된 정책(HierarchicalPolicyEngine)을 Data Plane(Envoy/eBPF)에서 즉시 사용할 수 있는 
+    검증된 정책(HierarchicalPolicyEngine 또는 MergedPolicy)을 Data Plane(Envoy/eBPF)에서 즉시 사용할 수 있는 
     고성능 룩업(Lookup) 지향 아티팩트 형태로 변환합니다.
-    
-    [Rule P.1 준수: Minimize Data Plane Overhead]
-    Data Plane은 수많은 패킷을 실시간으로 처리해야 하므로, 필드 검사 로직은
-    반드시 O(1) 시간 복잡도를 가져야 합니다. 이를 위해 Trie를 Flattening하여
-    해시 맵(Dictionary) 구조로 변환합니다.
     """
     
-    # 1. Trie Flattening (Compile-to-Flat)
-    # HierarchicalPolicyEngine의 flatten() 메서드를 사용하여 모든 허용된 경로를 추출합니다.
-    allowed_fields_list = policy_engine.flatten()
+    # Check if input is MergedPolicy (schema object)
+    if hasattr(policy_input, 'minimum_allowed_fields') and hasattr(policy_input, 'target_endpoint'):
+        allowed_fields_list = policy_input.minimum_allowed_fields
+        # Optional: override if provided, else use from policy
+        target_endpoint = target_endpoint or policy_input.target_endpoint
+        policy_version = policy_version if policy_version is not None else policy_input.policy_version
+    else:
+        # Assume HierarchicalPolicyEngine
+        if target_endpoint is None or policy_version is None:
+             raise ValueError("target_endpoint and policy_version required for Engine input")
+        allowed_fields_list = policy_input.flatten()
     
     # 2. O(1) Lookup을 위한 Hash Map 변환
     # Key: 필드명, Value: 1 (존재 여부만 확인하면 되므로 최소한의 값 사용)

@@ -5,9 +5,9 @@ from typing import Dict, Tuple, Set
 import time
 from typing import Dict, Tuple, Set
 try:
-    from hierarchical_policy_engine_cython import HierarchicalPolicyEngine
+    from hierarchical_control.hierarchical_policy_engine_cython import HierarchicalPolicyEngine
 except ImportError:
-    from hierarchical_policy_engine import HierarchicalPolicyEngine
+    from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine
 
 class AdaptivePolicyEngine(HierarchicalPolicyEngine):
     """

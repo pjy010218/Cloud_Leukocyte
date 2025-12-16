@@ -3,8 +3,8 @@ from Cython.Build import cythonize
 
 extensions = [
     Extension(
-        "hierarchical_policy_engine_cython",
-        ["hierarchical_policy_engine_cython.pyx"],
+        "hierarchical_control.hierarchical_policy_engine_cython",
+        ["hierarchical_control/hierarchical_policy_engine_cython.pyx"],
         language="c++",
     )
 ]

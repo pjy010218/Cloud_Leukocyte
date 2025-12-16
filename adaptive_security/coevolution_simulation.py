@@ -2,8 +2,8 @@
 import random
 import copy
 from typing import Dict, List, Tuple, Optional
-from hierarchical_policy_engine import HierarchicalPolicyEngine
-from evolutionary_agent import EvolutionaryAgent, ACTION_ALLOW, ACTION_SUPPRESS
+from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine
+from adaptive_security.evolutionary_agent import EvolutionaryAgent, ACTION_ALLOW, ACTION_SUPPRESS
 
 # Constants for Attacker
 MUTATION_OBFUSCATION = 0
