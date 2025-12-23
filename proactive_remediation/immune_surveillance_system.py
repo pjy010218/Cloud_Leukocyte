@@ -8,21 +8,21 @@ import numpy as np
 from hierarchical_control.hierarchical_policy_engine import HierarchicalPolicyEngine
 from adaptive_security.evolutionary_agent import EvolutionaryAgent
 from proactive_remediation.attack_pattern_analyzer import AttackPatternAnalyzer
-from proactive_remediation.cluster_scanner import ClusterScanner, MOCK_CLUSTER_METADATA
+# Phase 24: Use Neo4j Scanner
+from proactive_remediation.cluster_scanner_neo4j import ClusterScannerNeo4j
 from proactive_remediation.proactive_patcher import ProactivePatcher
 
-# ----------------------------------------------------------------------
-# 1. CORE COMPONENT: ImmuneSurveillanceSystem (Orchestrator)
-# ----------------------------------------------------------------------
+# ...
 
 class ImmuneSurveillanceSystem:
     """
     Coordinates the adaptive immune response from attack recognition to system-wide hardening.
     """
-    def __init__(self, rl_agent: EvolutionaryAgent, cluster_metadata: List[Dict[str, Any]]):
+    def __init__(self, rl_agent: EvolutionaryAgent, neo4j_uri: str = "bolt://localhost:7687"):
         # Initialize sub-components
         self.analyzer = AttackPatternAnalyzer(critical_q_threshold=100.0)
-        self.scanner = ClusterScanner(cluster_metadata=cluster_metadata)
+        # Phase 24: Real Neo4j Scanner
+        self.scanner = ClusterScannerNeo4j(uri=neo4j_uri)
         self.patcher = ProactivePatcher()
         self.rl_agent = rl_agent
 
@@ -61,7 +61,8 @@ class ImmuneSurveillanceSystem:
         print("\n--- Phase 3: System-wide Scan (Finding Susceptible Targets) ---")
         
         # 3.1 Identify other containers vulnerable to this signature
-        vulnerable_targets = self.scanner.scan_cluster(signature)
+        # Phase 24: Use Graph Scan
+        vulnerable_targets = self.scanner.scan_via_graph(signature)
         
         if not vulnerable_targets:
             print("[INFO] No other susceptible targets found based on library version/path exposure.")

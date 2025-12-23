@@ -16,13 +16,15 @@ MOCK_CVE_DB: Dict[str, Dict] = {
         "name": "Log4Shell",
         "keywords": ["${jndi:", "ldap://", "rmi://"],
         "common_paths": ["user_agent", "payload.content"],
-        "severity": 10.0
+        "severity": 10.0,
+        "cwe": "CWE-502" # Deserialization of Untrusted Data
     },
     "CVE-2022-22965": {
         "name": "Spring4Shell",
         "keywords": ["class.module", "classLoader"],
         "common_paths": ["payload.data"],
-        "severity": 9.8
+        "severity": 9.8,
+        "cwe": "CWE-94" # Code Injection
     }
 }
 
@@ -46,6 +48,9 @@ class AttackPatternAnalyzer:
             for keyword in data["keywords"]:
                 if keyword in payload_text:
                     found_indicators.append(f"{cve}:{keyword}")
+                    # Phase 24 Enhancement: Add CWE if known
+                    if "cwe" in data:
+                        found_indicators.append(data["cwe"])
         return found_indicators
 
     def analyze_attack_event(self, event_data: Dict[str, Any], rl_agent: EvolutionaryAgent) -> Optional[Dict]:
@@ -76,6 +81,10 @@ class AttackPatternAnalyzer:
             return None
 
         # 2. Signature Generation
+        # Phase 24: Extract CWE
+        found_indicators = self._match_static_indicators(event_data['payload_sample'])
+        related_cwe = next((ind for ind in found_indicators if ind.startswith("CWE-")), None)
+
         signature = {
             "signature_id": f"RL-SIG-{random.randint(1000, 9999)}",
             "threat_level": "CRITICAL",
@@ -85,7 +94,8 @@ class AttackPatternAnalyzer:
                 "entropy_level": "HIGH" 
             },
             "rl_suppress_q_value": float(suppress_q),
-            "static_indicators": self._match_static_indicators(event_data['payload_sample']),
+            "static_indicators": found_indicators,
+            "related_cwe": related_cwe,
             "suggested_remediation": "EPIGENETIC_SUPPRESSION"
         }
         
