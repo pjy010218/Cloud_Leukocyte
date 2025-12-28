@@ -1,0 +1,69 @@
+{
+  "experiment_id": "k8s_leukocyte_metrics_20251229",
+  "timestamp": "2025-12-28T16:00:56.313583+00:00",
+  "metrics": {
+    "MTTD": {
+      "mean": 0.407,
+      "std": 0.029,
+      "unit": "seconds",
+      "ci_95": [
+        0.374,
+        0.439
+      ]
+    },
+    "MTTC": {
+      "mean": 0.053,
+      "std": 0.019,
+      "unit": "seconds",
+      "ci_95": [
+        0.032,
+        0.075
+      ]
+    },
+    "MTTP": {
+      "mean": 0.438,
+      "std": 0.364,
+      "unit": "seconds",
+      "ci_95": [
+        0.026,
+        0.849
+      ]
+    },
+    "MTTI": {
+      "mean": 0.844,
+      "std": 0.338,
+      "unit": "seconds",
+      "ci_95": [
+        0.462,
+        1.227
+      ]
+    },
+    "Blast_Radius": {
+      "mean": 1,
+      "std": 0.0,
+      "unit": "services",
+      "ci_95": [
+        1.0,
+        1.0
+      ]
+    },
+    "First_Block_Latency": {
+      "mean": 0.001,
+      "std": 0.0,
+      "unit": "seconds",
+      "ci_95": [
+        0.001,
+        0.001
+      ]
+    },
+    "WASM_Memory_Overhead_Bytes": {
+      "mean": 1247914.667,
+      "std": 2161451.606,
+      "unit": "bytes",
+      "ci_95": [
+        -1197998.08,
+        3693827.413
+      ]
+    }
+  }
+}

@@ -53,9 +53,51 @@ class AttackPatternAnalyzer:
                         found_indicators.append(data["cwe"])
         return found_indicators
 
-    def analyze_attack_event(self, event_data: Dict[str, Any], rl_agent: EvolutionaryAgent) -> Optional[Dict]:
+    def _lookup_cve_from_graph(self, scanner, payload_text: str) -> Optional[Dict]:
+        """
+        Queries Neo4j (via Scanner) to find a CVE matching keywords in the payload.
+        Returns the most relevant CVE dict {id, cwe, severity} if found.
+        """
+        if not scanner:
+            return None
+
+        # 1. Identify potential keywords from payload
+        # For simplicity, we search for ANY keyword in the graph that appears in payload
+        # In a real system, we'd extract specific tokens. Here, we do a reverse check? 
+        # Actually, efficient way: Search for CVEs whose 'keywords' property intersects with payload.
+        # But Cypher 'contains' is easier if we iterate known keywords?
+        # Better: Query all CVEs with keywords, and check in python? Or pass payload to Cypher?
+        # Let's pass payload to Cypher and check: ANY(k IN cve.keywords WHERE $payload CONTAINS k)
+        
+        query = """
+        MATCH (cve:CVE)-[:HAS_WEAKNESS]->(w:Weakness)
+        WHERE ANY(k IN cve.keywords WHERE $payload CONTAINS k)
+        RETURN cve.id AS id, cve.severity AS severity, w.description AS cwe_desc
+        ORDER BY cve.severity DESC
+        LIMIT 1
+        """
+        
+        try:
+            with scanner.driver.session() as session:
+                result = session.run(query, payload=payload_text).single()
+                if result:
+                    # Parse CWE ID from description (e.g. "CWE-94: ...")
+                    cwe_desc = result["cwe_desc"]
+                    cwe_id = cwe_desc.split(":")[0] if ":" in cwe_desc else "UNKNOWN"
+                    return {
+                        "cve_id": result["id"],
+                        "cwe": cwe_id,
+                        "severity": result["severity"]
+                    }
+        except Exception as e:
+            print(f"[ANALYZER ERROR] Graph Lookup Failed: {e}")
+        
+        return None
+
+    def analyze_attack_event(self, event_data: Dict[str, Any], rl_agent: EvolutionaryAgent, scanner=None) -> Optional[Dict]:
         """
         공격 이벤트와 RL Agent의 Q-Table을 결합하여 AttackSignature를 추출합니다.
+        scanner: Optional ClusterScannerNeo4j instance for dynamic lookup.
         """
         path = event_data['path']
         # RL Agent의 State 구성 요소를 가져옴
@@ -81,9 +123,20 @@ class AttackPatternAnalyzer:
             return None
 
         # 2. Signature Generation
-        # Phase 24: Extract CWE
-        found_indicators = self._match_static_indicators(event_data['payload_sample'])
-        related_cwe = next((ind for ind in found_indicators if ind.startswith("CWE-")), None)
+        # Phase 24 Enhancement: Dynamic Lookup from Neo4j
+        dynamic_cve_data = self._lookup_cve_from_graph(scanner, event_data['payload_sample'])
+        
+        related_cwe = None
+        found_indicators = []
+        
+        if dynamic_cve_data:
+            print(f"[ANALYZER] Dynamic Lookup Hit: {dynamic_cve_data['cve_id']} ({dynamic_cve_data['cwe']})")
+            found_indicators.append(f"{dynamic_cve_data['cve_id']}:Detected")
+            related_cwe = dynamic_cve_data['cwe']
+        else:
+            # Fallback to static mock DB
+            found_indicators = self._match_static_indicators(event_data['payload_sample'])
+            related_cwe = next((ind for ind in found_indicators if ind.startswith("CWE-")), None)
 
         signature = {
             "signature_id": f"RL-SIG-{random.randint(1000, 9999)}",

@@ -8,6 +8,8 @@ __pycache__/
 *.csv
 *.png
 *.jpg
+*.md
+*.txt
 
 # Distribution / packaging
 .Python
@@ -15,7 +17,8 @@ build/
 develop-eggs/
 dist/
 downloads/
-istio-1.28.0/
+istio-1.28.2/
+kubectl
 .vscode/
 eggs/
 .eggs/

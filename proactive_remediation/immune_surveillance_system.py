@@ -50,7 +50,9 @@ class ImmuneSurveillanceSystem:
         print("\n--- Phase 2: Pattern Analysis (Signature Extraction) ---")
         
         # 2.1 Analyze the event and RL's learned policy to generate a signature
-        signature = self.analyzer.analyze_attack_event(initial_attack_event, self.rl_agent)
+        # 2.1 Analyze the event and RL's learned policy to generate a signature
+        # Phase 24: Pass scanner for dynamic lookup
+        signature = self.analyzer.analyze_attack_event(initial_attack_event, self.rl_agent, scanner=self.scanner)
         if not signature:
             print("[WARNING] RL Q-Value too low or signature incomplete. Aborting proactive scan.")
             return response_summary
@@ -86,10 +88,13 @@ class ImmuneSurveillanceSystem:
         # We simulate the infected service (LogService) sharing its immunity
         source_engine = engine_map[initial_service_id]
         
+        response_summary["transduced_services"] = []
+        
         for service_id, target_engine in engine_map.items():
             if service_id != initial_service_id:
                 # Transduction: Target engine acquires immunity from the source
                 target_engine.transduce_immunity(source_engine)
+                response_summary["transduced_services"].append(service_id)
                 print(f"   [TRANSDUCTION]: {initial_service_id} shared immunity trait with {service_id}.")
 
         response_summary["action_flow"].append("P5: Immunity propagated cluster-wide via Transduction.")
