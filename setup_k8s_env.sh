@@ -43,12 +43,15 @@ docker build -t leukocyte/controller:transduction .
 
 # 3. Namespace Setup
 echo "🔧 Creating namespace 'online-boutique' with Istio injection..."
-kubectl create namespace online-boutique --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace online-boutique --dry-run=client -o yaml | kubectl apply -f - --validate=false
 kubectl label namespace online-boutique istio-injection=enabled --overwrite
 
 # 4. Deploy Online Boutique
 echo "🛒 Deploying Google Online Boutique..."
-kubectl apply -n online-boutique -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
+kubectl apply -n online-boutique -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml --validate=false
+
+echo "   ⏳ Waiting 10s for API server to ingest resources..."
+sleep 10
 
 # 5. Deploy Cloud Leukocyte Resources & Patches
 echo "🩺 Deploying Cloud Leukocyte Components..."
@@ -58,39 +61,40 @@ echo "   📄 Creating WASM ConfigMap..."
 # Delete existing CM to avoid update issues
 kubectl -n online-boutique delete configmap leukocyte-wasm --ignore-not-found
 kubectl -n online-boutique create configmap leukocyte-wasm \
-    --from-file=leukocyte.wasm=$WASM_PATH
+    --from-file=leukocyte.wasm=$WASM_PATH --request-timeout=60s
 
-# 5.2 Patch adservice to mount the WASM via Istio Annotations
-echo "   🩹 Patching adservice to mount WASM (Sidecar Injection)..."
-# We use proper JSON escaping for the annotation values
-kubectl -n online-boutique patch deployment adservice --type=merge -p '
-{
-  "spec": {
-    "template": {
-      "metadata": {
-        "annotations": {
-          "sidecar.istio.io/userVolume": "[{\"name\":\"wasm-volume\",\"configMap\":{\"name\":\"leukocyte-wasm\"}}]",
-          "sidecar.istio.io/userVolumeMount": "[{\"mountPath\":\"/var/local/lib/wasm\",\"name\":\"wasm-volume\"}]"
+# 5.2 Patch ALL deployments to mount the WASM via Istio Annotations
+echo "   🩹 Patching ALL deployments to mount WASM (Universal Immunization)..."
+
+DEPLOYS=$(kubectl get deployments -n online-boutique -o jsonpath='{.items[*].metadata.name}')
+
+for APP in $DEPLOYS; do
+  # Skip leukocyte-controller if it exists as a deployment (it shouldn't need the filter, or maybe it does?)
+  # Actually, controller is the immune system brain, it doesn't need the filter usually, but let's exclude it to be safe or include it if sidecar is there.
+  # The controller deployment is usually 'leukocyte-controller'.
+  if [[ "$APP" == "leukocyte-controller" ]]; then
+      continue
+  fi
+
+  echo "      -> Immunizing $APP ..."
+  kubectl -n online-boutique patch deployment $APP --type=merge -p '
+  {
+    "spec": {
+      "template": {
+        "metadata": {
+          "annotations": {
+            "sidecar.istio.io/userVolume": "[{\"name\":\"wasm-volume\",\"configMap\":{\"name\":\"leukocyte-wasm\"}}]",
+            "sidecar.istio.io/userVolumeMount": "[{\"mountPath\":\"/var/local/lib/wasm\",\"name\":\"wasm-volume\"}]"
+          }
         }
       }
     }
-  }
-}'
+  }'
+done
 
-echo "   🩹 Patching checkoutservice to mount WASM (Sidecar Injection)..."
-kubectl -n online-boutique patch deployment checkoutservice --type=merge -p '
-{
-  "spec": {
-    "template": {
-      "metadata": {
-        "annotations": {
-          "sidecar.istio.io/userVolume": "[{\"name\":\"wasm-volume\",\"configMap\":{\"name\":\"leukocyte-wasm\"}}]",
-          "sidecar.istio.io/userVolumeMount": "[{\"mountPath\":\"/var/local/lib/wasm\",\"name\":\"wasm-volume\"}]"
-        }
-      }
-    }
-  }
-}'
+# Force restart to pick up new ConfigMap/Annotations
+# Redundant restart removed: 'kubectl patch' triggers a rollout automatically.
+# This prevents double-restarting the entire cluster which causes API server load spikes.
 
 # 5.3 Deploy Leukocyte Resources
 kubectl apply -f infrastructure/k8s/leukocyte-resources.yaml

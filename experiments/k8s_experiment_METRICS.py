@@ -109,20 +109,33 @@ def trigger_attack():
 def env_reset_and_measure():
     print("   [Reset] Clearing EnvoyFilters & Measuring Baseline Memory...")
     run_command(f"kubectl delete envoyfilter -n {CONTROLLER_NAMESPACE} --all --ignore-not-found")
-    time.sleep(15) 
+    
+    # Restart AdService to clear Envoy memory (ensure clean baseline)
+    run_command(f"kubectl rollout restart deployment adservice -n {CONTROLLER_NAMESPACE}")
+    run_command(f"kubectl rollout status deployment adservice -n {CONTROLLER_NAMESPACE}")
+    
+    print("   [Wait] Stabilizing Baseline (5s)...")
+    time.sleep(5)
     
     mem_base = query_prometheus('sum(container_memory_usage_bytes{namespace="online-boutique",pod=~"adservice-.*"})')
-    print(f"   [Baseline] Memory: {mem_base:.0f} bytes")
+    print(f"   [Baseline] Memory Raw: {mem_base} bytes")
 
     print("   [Reset] Restoring base EnvoyFilters (Applying WASM)...")
     run_command("kubectl apply -f infrastructure/k8s/leukocyte-resources.yaml")
     
     run_command(f"kubectl rollout restart deployment leukocyte-controller -n {CONTROLLER_NAMESPACE}")
     run_command(f"kubectl rollout status deployment leukocyte-controller -n {CONTROLLER_NAMESPACE}")
-    time.sleep(20) 
+    
+    # Restart AdService to pick up new Sidecar config (WASM) reliably
+    run_command(f"kubectl rollout restart deployment adservice -n {CONTROLLER_NAMESPACE}")
+    run_command(f"kubectl rollout status deployment adservice -n {CONTROLLER_NAMESPACE}")
+    
+    # Wait for stabilization (WASM init takes time + GC)
+    print("   [Wait] Stabilizing (10s)...")
+    time.sleep(10) 
     
     mem_active = query_prometheus('sum(container_memory_usage_bytes{namespace="online-boutique",pod=~"adservice-.*"})')
-    print(f"   [Active] Memory: {mem_active:.0f} bytes")
+    print(f"   [Active] Memory Raw: {mem_active} bytes")
     
     return mem_base, mem_active
 
@@ -292,12 +305,15 @@ def run_experiment_metrics():
         if not values: continue
         report["metrics"][key] = {
             "mean": round(statistics.mean(values), 3),
-            "std": round(statistics.stdev(values) if len(values) > 1 else 0, 3),
+            "std": round(statistics.stdev(values) if len(values) > 1 else 0.0, 3) if len(values) > 1 else 0.0,
             "unit": "seconds" if key.startswith("MT") or "Latency" in key else "bytes" if "Bytes" in key else "services"
         }
         if len(values) > 1:
-            ci = 1.96 * statistics.stdev(values) / (len(values)**0.5)
-            report["metrics"][key]["ci_95"] = [round(statistics.mean(values) - ci, 3), round(statistics.mean(values) + ci, 3)]
+            try:
+                ci = 1.96 * statistics.stdev(values) / (len(values)**0.5)
+                report["metrics"][key]["ci_95"] = [round(statistics.mean(values) - ci, 3), round(statistics.mean(values) + ci, 3)]
+            except Exception:
+                report["metrics"][key]["ci_95"] = [0.0, 0.0]
     
     print("\n[Report]")
     print(json.dumps(report, indent=2))

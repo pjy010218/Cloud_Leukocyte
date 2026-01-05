@@ -115,49 +115,58 @@ def apply_policy_update(service_name, policy_json):
         # Heuristic fallback
         filter_name = f"leukocyte-wasm-filter-{service_name.lower()}"
     
-    try:
-        # Get current resource
-        resource = api.get_namespaced_custom_object(
-            group="networking.istio.io",
-            version="v1alpha3",
-            namespace=namespace,
-            plural="envoyfilters",
-            name=filter_name
-        )
-        
-        # Modify the configuration
-        # Path: spec -> configPatches[0] -> patch -> value -> typed_config -> config -> configuration
-        # We assume the structure matches infrastructure/k8s/leukocyte-resources.yaml (after our update)
-        
-        # We need to construct the configuration message.
-        # Envoy WASM filter expects a google.protobuf.StringValue for configuration.
-        new_config_struct = {
-            "@type": "type.googleapis.com/google.protobuf.StringValue",
-            "value": policy_json
-        }
-        
-        # Navigate and set
-        patch_value = resource['spec']['configPatches'][0]['patch']['value']
-        
-        # Ensure path exists
-        if 'typed_config' in patch_value and 'config' in patch_value['typed_config']:
-             patch_value['typed_config']['config']['configuration'] = new_config_struct
-             
-             # Apply Patch
-             api.patch_namespaced_custom_object(
+    # Phase 25: Robust Actuation (Retry Logic)
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Get current resource
+            resource = api.get_namespaced_custom_object(
                 group="networking.istio.io",
                 version="v1alpha3",
                 namespace=namespace,
                 plural="envoyfilters",
-                name=filter_name,
-                body=resource
-             )
-             logger.info(f"✅ [ACTUATION] EnvoyFilter '{filter_name}' successfully patched via K8s API.")
-        else:
-            logger.error(f"❌ [ACTUATION FAILED] Unexpected EnvoyFilter structure.")
+                name=filter_name
+            )
             
-    except Exception as e:
-        logger.error(f"❌ [ACTUATION FAILED] Could not patch EnvoyFilter: {e}")
+            # Modify the configuration
+            # Path: spec -> configPatches[0] -> patch -> value -> typed_config -> config -> configuration
+            # We assume the structure matches infrastructure/k8s/leukocyte-resources.yaml (after our update)
+            
+            # We need to construct the configuration message.
+            # Envoy WASM filter expects a google.protobuf.StringValue for configuration.
+            new_config_struct = {
+                "@type": "type.googleapis.com/google.protobuf.StringValue",
+                "value": policy_json
+            }
+            
+            # Navigate and set
+            patch_value = resource['spec']['configPatches'][0]['patch']['value']
+            
+            # Ensure path exists
+            if 'typed_config' in patch_value and 'config' in patch_value['typed_config']:
+                 patch_value['typed_config']['config']['configuration'] = new_config_struct
+                 
+                 # Apply Patch
+                 api.patch_namespaced_custom_object(
+                    group="networking.istio.io",
+                    version="v1alpha3",
+                    namespace=namespace,
+                    plural="envoyfilters",
+                    name=filter_name,
+                    body=resource
+                 )
+                 logger.info(f"✅ [ACTUATION] EnvoyFilter '{filter_name}' successfully patched via K8s API.")
+                 return # Success
+            else:
+                logger.error(f"❌ [ACTUATION FAILED] Unexpected EnvoyFilter structure.")
+                return # Fatal error, do not retry structure issues
+                
+        except Exception as e:
+            logger.warning(f"⚠️ [ACTUATION RETRY] Attempt {attempt+1}/{MAX_RETRIES} failed for {filter_name}: {e}")
+            time.sleep(2) # Backoff
+            
+    logger.error(f"❌ [ACTUATION FAILED] Could not patch EnvoyFilter {filter_name} after {MAX_RETRIES} attempts.")
+            
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -208,10 +217,14 @@ def detect_attack():
                 if target_engine:
                      # Generate Policy JSON
                      from data_plane.wasm_config_generator import generate_wasm_filter_config
+                     # Serialize logic should be quick
                      policy_json = generate_wasm_filter_config(target_engine)
                      
                      # Apply to Infrastructure
                      apply_policy_update(target_id, policy_json)
+                     
+                     # Throttling to prevent Istiod Webhook overload (Context Deadline Exceeded)
+                     time.sleep(1.0)
                 else:
                      logger.warning(f"⚠️ Actuation Skipped: No Policy Engine for {target_id}")
 

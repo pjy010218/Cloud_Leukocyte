@@ -81,5 +81,40 @@ def generate_comparison_chart():
     plt.savefig('baseline_comparison.png', dpi=300, bbox_inches='tight')
     print("Chart saved to baseline_comparison.png")
 
+def print_summary_table():
+    leukocyte = load_leukocyte_metrics()
+    rollout_baseline = load_baseline_measurements()
+    
+    # Load all metrics for full report
+    try:
+        with open("k8s_metrics_report.json", "r") as f:
+            full_data = json.load(f)
+            metrics = full_data.get("metrics", {})
+    except:
+        metrics = {}
+        
+    mtti = metrics.get("MTTI", {}).get("mean", 0)
+    overhead = metrics.get("WASM_Memory_Overhead_Bytes", {}).get("mean", 0)
+    block_lat = metrics.get("First_Block_Latency", {}).get("mean", 0)
+
+    print("\n" + "="*60)
+    print(f"{'METRIC':<30} | {'LEUKOCYTE':<12} | {'BASELINE':<12}")
+    print("-" * 60)
+    print(f"{'End-to-End Response (MTTI)':<30} | {mtti:>10.3f}s | {rollout_baseline:>10.1f}s (Rollout)")
+    print(f"{'First Block Latency':<30} | {block_lat:>10.3f}s | {'N/A':>12}")
+    
+    if overhead > 1024*1024:
+        mem_str = f"{overhead/(1024*1024):.2f} MiB"
+    else:
+        mem_str = f"{overhead/1024:.2f} KiB"
+        
+    print(f"{'Memory Overhead':<30} | {mem_str:>10} | {'0':>12}")
+    print("-" * 60)
+    
+    speedup = rollout_baseline / mtti if mtti > 0 else 0
+    print(f"🚀 Speedup Factor: {speedup:.1f}x Faster than Standard K8s")
+    print("="*60 + "\n")
+
 if __name__ == "__main__":
     generate_comparison_chart()
+    print_summary_table()

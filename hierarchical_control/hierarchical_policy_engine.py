@@ -33,7 +33,7 @@ class HierarchicalPolicyEngine:
         node = self.root
         if not path:
             return
-        parts = path.split('.')
+        parts = path.lower().split('.')
         for part in parts:
             if part not in node.children:
                 node.children[part] = TrieNode()
@@ -49,7 +49,7 @@ class HierarchicalPolicyEngine:
         node = self.root
         if not path:
             return
-        parts = path.split('.')
+        parts = path.lower().split('.')
         for part in parts:
             if part not in node.children:
                 node.children[part] = TrieNode()
@@ -62,7 +62,7 @@ class HierarchicalPolicyEngine:
         Returns: "ALLOWED", "DENIED_NOT_FOUND", "BLOCKED_SUPPRESSED"
         """
         node = self.root
-        parts = path.split('.')
+        parts = path.lower().split('.')
         for part in parts:
             if part not in node.children:
                 return "DENIED_NOT_FOUND"
